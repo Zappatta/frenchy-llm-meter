@@ -104,7 +104,10 @@ never been fed. That is correct; the Mac side comes next.
 
 ## 5. Install on the Mac
 
-macOS only for now — launchd and the BLE central are both Mac-specific.
+macOS only for now. The daemon should port to Linux without much trouble —
+`bleak` speaks BlueZ and nothing above it is Mac-specific — but the installer
+wires up a launchd job and `~/Library` paths, and nobody has run it there. A
+systemd user unit and someone with the hardware would settle it.
 
 ```sh
 python3 install.py

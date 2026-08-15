@@ -190,8 +190,13 @@ def preflight() -> None:
     step("Checking this machine")
 
     if sys.platform != "darwin":
-        die(f"macOS only for now (this is {sys.platform}) — launchd and the BLE "
-            "central are both Mac-specific")
+        bad(f"macOS only for now (this is {sys.platform})")
+        note("the daemon itself should port cleanly — bleak speaks BlueZ on")
+        note("Linux, and nothing above it is Mac-specific. What is missing is")
+        note("this installer: a systemd user unit in place of the launchd job,")
+        note("XDG paths in place of ~/Library, and somebody with the hardware")
+        note("to find out what that turns up.")
+        sys.exit(1)
     ok("macOS")
 
     if sys.version_info < MIN_PYTHON:
