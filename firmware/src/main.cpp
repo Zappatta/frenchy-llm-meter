@@ -17,10 +17,10 @@ namespace {
 // The LED animates continuously, so it updates far more often than the screen.
 constexpr uint32_t LED_INTERVAL_MS = 33;  // ~30fps
 
-// The screen animates too now — a waiting session's ring breathes — so this is
-// a render tick rather than a heartbeat. render() diffs against what is on the
-// glass, so a tick with nothing moving costs a handful of comparisons.
-constexpr uint32_t SCREEN_INTERVAL_MS = 60;
+// Nothing on the glass animates: the LED carries motion, the screen carries
+// colour. render() diffs against what is already drawn, so this is a slow
+// heartbeat rather than a frame rate.
+constexpr uint32_t SCREEN_INTERVAL_MS = 250;
 
 uint32_t lastLed = 0;
 uint32_t lastScreen = 0;
@@ -62,7 +62,7 @@ void loop() {
     }
     wasLinkUp = linkUp;
 
-    display::render(ble_link::frame(), linkUp, haveFrame, now);
+    display::render(ble_link::frame(), linkUp, haveFrame);
   }
 
   delay(5);
