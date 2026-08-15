@@ -15,7 +15,7 @@ from .protocol import FLAG_HOST_ERROR, FLAG_LIMIT_WARN, FLAG_NO_USAGE, FLAG_STAL
 from .transcripts import SessionState, TranscriptReader, resolve_root
 from .usage import USAGE_FILE, hook_installed
 
-log = logging.getLogger("clawd_meter")
+log = logging.getLogger("frenchy_llm_meter")
 
 DEFAULT_INTERVAL = 5.0
 
@@ -113,7 +113,7 @@ async def run(interval: float, dry_run: bool, device_name: str) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="clawd-meter", description="Push Claude plan usage to the clawd-meter."
+        prog="frenchy-llm-meter", description="Push Claude plan usage to the frenchy-llm-meter."
     )
     parser.add_argument(
         "--interval", type=float, default=DEFAULT_INTERVAL, help="seconds between polls"

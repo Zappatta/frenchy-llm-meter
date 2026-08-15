@@ -369,5 +369,5 @@ class TranscriptReader:
 
 
 def resolve_root() -> Path:
-    override = os.environ.get("CLAWD_PROJECTS_DIR")
+    override = os.environ.get("FRENCHY_PROJECTS_DIR")
     return Path(override).expanduser() if override else DEFAULT_ROOT

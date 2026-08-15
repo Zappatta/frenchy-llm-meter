@@ -3,10 +3,10 @@ import os
 import subprocess
 from datetime import datetime, timedelta, timezone
 
-from clawd_meter import sessions as sessions_module
-from clawd_meter.plan import PlanMeter
-from clawd_meter.protocol import FLAG_NO_USAGE
-from clawd_meter.transcripts import SessionState, TranscriptReader
+from frenchy_llm_meter import sessions as sessions_module
+from frenchy_llm_meter.plan import PlanMeter
+from frenchy_llm_meter.protocol import FLAG_NO_USAGE
+from frenchy_llm_meter.transcripts import SessionState, TranscriptReader
 
 NOW = datetime(2026, 8, 15, 12, 0, tzinfo=timezone.utc)
 
@@ -25,7 +25,7 @@ def _dead_pid() -> int:
 def _registry(tmp_path, monkeypatch):
     directory = tmp_path / "sessions"
     directory.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setenv("CLAWD_SESSIONS_DIR", str(directory))
+    monkeypatch.setenv("FRENCHY_SESSIONS_DIR", str(directory))
     return directory
 
 
@@ -201,7 +201,7 @@ def test_an_empty_registry_means_nothing_is_open(tmp_path, monkeypatch):
 
 def test_without_a_registry_liveness_falls_back_to_transcripts(tmp_path, monkeypatch):
     """Older Claude Code publishes no session files; that path still works."""
-    monkeypatch.setenv("CLAWD_SESSIONS_DIR", str(tmp_path / "does-not-exist"))
+    monkeypatch.setenv("FRENCHY_SESSIONS_DIR", str(tmp_path / "does-not-exist"))
     _write(
         tmp_path / "-Users-x-Code" / "sess-a.jsonl",
         [_assistant(NOW - timedelta(minutes=1), "r1", "m1")],

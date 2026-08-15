@@ -147,5 +147,5 @@ def available(directory: Path | None = None) -> bool:
 
 
 def resolve_dir() -> Path:
-    override = os.environ.get("CLAWD_SESSIONS_DIR")
+    override = os.environ.get("FRENCHY_SESSIONS_DIR")
     return Path(override).expanduser() if override else DEFAULT_DIR

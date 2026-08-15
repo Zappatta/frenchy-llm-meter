@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Set up clawd-meter on this Mac. Nothing here needs hand-editing a file.
+"""Set up frenchy-llm-meter on this Mac. Nothing here needs hand-editing a file.
 
     python3 install.py              install, then offer the plan-usage hook
     python3 install.py --doctor     diagnose a meter that is not updating
@@ -47,14 +47,14 @@ CLAUDE_DIR = Path.home() / ".claude"
 SETTINGS = CLAUDE_DIR / "settings.json"
 SESSIONS_DIR = CLAUDE_DIR / "sessions"
 
-LABEL = "io.clawdmeter.daemon"
+LABEL = "io.frenchyllmmeter.daemon"
 PLIST = Path.home() / "Library" / "LaunchAgents" / f"{LABEL}.plist"
 # One file, not two. Python's logging writes to stderr, so a split StandardOut
 # / StandardError leaves the .log everybody looks in permanently empty while
 # every line lands in the .err.log nobody thinks to open.
-LOG = Path.home() / "Library" / "Logs" / "clawd-meter.log"
+LOG = Path.home() / "Library" / "Logs" / "frenchy-llm-meter.log"
 
-STATE_DIR = Path.home() / ".local" / "state" / "clawd-meter"
+STATE_DIR = Path.home() / ".local" / "state" / "frenchy-llm-meter"
 USAGE_FILE = STATE_DIR / "usage.json"
 RECEIPT = STATE_DIR / "install.json"
 
@@ -121,14 +121,14 @@ def read_json(path: Path) -> object | None:
 def write_json(path: Path, data: object) -> None:
     """Write via a temp file so an interrupted run cannot truncate the original."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".clawd-tmp")
+    tmp = path.with_suffix(path.suffix + ".frenchy-tmp")
     tmp.write_text(json.dumps(data, indent=2) + "\n")
     os.replace(tmp, path)
 
 
 def statusline_command(inner: str) -> str:
     return (
-        f"CLAWD_INNER_STATUSLINE={shlex.quote(inner)} bash {shlex.quote(str(SHIM))}"
+        f"FRENCHY_INNER_STATUSLINE={shlex.quote(inner)} bash {shlex.quote(str(SHIM))}"
     )
 
 
@@ -147,7 +147,7 @@ def is_our_shim(command: str | None) -> bool:
 
 
 def is_some_shim(command: str | None) -> bool:
-    """A clawd-meter wrapper, possibly from a checkout that has since moved."""
+    """A frenchy-llm-meter wrapper, possibly from a checkout that has since moved."""
     return bool(command) and SHIM.name in _expanded(command)
 
 
@@ -163,7 +163,7 @@ def wrapped_inner(command: str) -> str | None:
     except ValueError:
         return None
     for part in parts:
-        if part.startswith("CLAWD_INNER_STATUSLINE="):
+        if part.startswith("FRENCHY_INNER_STATUSLINE="):
             return part.split("=", 1)[1]
     return None
 
@@ -239,7 +239,7 @@ def build_venv(dry: bool) -> None:
     if result.returncode != 0:
         print(result.stdout, result.stderr)
         die("pip install failed")
-    ok("clawd-meter and its dependencies installed")
+    ok("frenchy-llm-meter and its dependencies installed")
 
 
 def probe(dry: bool) -> None:
@@ -268,7 +268,7 @@ def probe(dry: bool) -> None:
     print("    meter can never be reached.\n")
 
     proc = subprocess.Popen(
-        [str(VENV_PY), "-m", "clawd_meter", "--interval", "3"],
+        [str(VENV_PY), "-m", "frenchy_llm_meter", "--interval", "3"],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
@@ -310,7 +310,7 @@ def install_agent(dry: bool) -> None:
     plist = {
         "Label": LABEL,
         "ProgramArguments": [
-            str(VENV_PY), "-m", "clawd_meter", "--interval", POLL_INTERVAL
+            str(VENV_PY), "-m", "frenchy_llm_meter", "--interval", POLL_INTERVAL
         ],
         "WorkingDirectory": str(HOST),
         "RunAtLoad": True,
@@ -337,7 +337,7 @@ def install_agent(dry: bool) -> None:
         result = run(["launchctl", "load", "-w", str(PLIST)], check=False)
     if result.returncode != 0:
         bad(f"launchctl refused the job: {result.stderr.strip()}")
-        note(f"the daemon still runs by hand: {VENV_PY} -m clawd_meter")
+        note(f"the daemon still runs by hand: {VENV_PY} -m frenchy_llm_meter")
         return
     ok(f"service started, logs at {LOG}")
 
@@ -417,7 +417,7 @@ def offer_usage(dry: bool, decision: bool | None) -> None:
     data = data if isinstance(data, dict) else {}
 
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    backup = SETTINGS.with_name(f"settings.json.clawd-backup-{stamp}")
+    backup = SETTINGS.with_name(f"settings.json.frenchy-backup-{stamp}")
     if SETTINGS.exists():
         shutil.copy2(SETTINGS, backup)
         ok(f"backed up settings to {backup.name}")
@@ -459,6 +459,12 @@ def remove_usage(dry: bool) -> None:
     if isinstance(previous, dict):
         data["statusLine"] = previous
         ok("restored your previous statusline")
+    elif (inner := wrapped_inner(current)):
+        # No receipt, because the wrapper was put there by hand rather than by
+        # this installer. The command still carries what it wraps, so unwrap it
+        # — deleting the whole block instead loses a statusline we never owned.
+        data["statusLine"] = {"type": "command", "command": inner}
+        ok(f"unwrapped your statusline: {inner}")
     else:
         data.pop("statusLine", None)
         ok("removed the statusline we added")
@@ -472,7 +478,7 @@ def remove_usage(dry: bool) -> None:
 
 def doctor() -> int:
     """Diagnose a meter that is not updating, in pipeline order."""
-    step("clawd-meter doctor")
+    step("frenchy-llm-meter doctor")
     problems = 0
 
     # 1. sessions registry — the zero-config core
@@ -537,7 +543,8 @@ def doctor() -> int:
             ok(f"capture is {age}s old")
         if isinstance(limits, dict) and limits.get("five_hour"):
             pct = limits["five_hour"].get("used_percentage")
-            ok(f"plan usage present: 5h at {pct}%")
+            shown = f"{pct:.1f}" if isinstance(pct, (int, float)) else pct
+            ok(f"plan usage present: 5h at {shown}%")
         else:
             warn("capture has no rate_limits")
             note("these only exist for Claude.ai Pro/Max accounts, and only")
@@ -548,7 +555,7 @@ def doctor() -> int:
 
     # 5. the shim path still resolving
     if is_some_shim(current) and not is_our_shim(current):
-        bad("your statusline points at a different clawd-meter checkout")
+        bad("your statusline points at a different frenchy-llm-meter checkout")
         note("the repo was moved or renamed; re-run `python3 install.py --with-usage`")
         problems += 1
 
@@ -566,7 +573,7 @@ def doctor() -> int:
 
 
 def uninstall(dry: bool) -> int:
-    step("Removing clawd-meter")
+    step("Removing frenchy-llm-meter")
 
     uid = os.getuid()
     if not dry:
@@ -590,7 +597,7 @@ def uninstall(dry: bool) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="install.py", description="Set up clawd-meter on this Mac."
+        prog="install.py", description="Set up frenchy-llm-meter on this Mac."
     )
     parser.add_argument("--doctor", action="store_true",
                         help="diagnose an installed meter and exit")

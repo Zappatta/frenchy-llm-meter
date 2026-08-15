@@ -1,4 +1,4 @@
-# clawd-meter
+# frenchy-llm-meter
 
 Claude Code plan usage on a 1.28" round display, mounted in a 3D-printed Clawd.
 
@@ -160,7 +160,7 @@ BGR. Flash the default, then look at a session that is working: the ring should
 be **amber**. If it is **blue**, you have the other variant:
 
 ```sh
-pio run -e clawd-meter-rgb -t upload
+pio run -e frenchy-llm-meter-rgb -t upload
 ```
 
 Green is unaffected by the swap — it sits in the middle channel — so a wrong
@@ -276,7 +276,7 @@ not in any transcript or state file on disk. That is why the shim exists, and
 why it is the one optional part of the install.
 
 `statusline-hook.sh` captures the blob to
-`~/.local/state/clawd-meter/usage.json` and hands the untouched payload to your
+`~/.local/state/frenchy-llm-meter/usage.json` and hands the untouched payload to your
 existing statusline. Everything it does is guarded and its stderr discarded — a
 failure to record usage can never break your statusline. The capture is only as
 fresh as the last render, which stops when you close every session; a reading
@@ -290,17 +290,17 @@ cd host
 python3 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
 
-.venv/bin/python -m clawd_meter --dry-run     # print to stdout, no BLE
-.venv/bin/python -m clawd_meter               # connect and push
+.venv/bin/python -m frenchy_llm_meter --dry-run     # print to stdout, no BLE
+.venv/bin/python -m frenchy_llm_meter               # connect and push
 .venv/bin/python -m pytest tests/ -q
 ```
 
 | Variable | Purpose |
 |---|---|
-| `CLAWD_PROJECTS_DIR` | override `~/.claude/projects` |
-| `CLAWD_SESSIONS_DIR` | override `~/.claude/sessions` |
-| `CLAWD_STATE_DIR` | override where the usage capture is written and read |
-| `CLAWD_INNER_STATUSLINE` | the statusline command the shim wraps |
+| `FRENCHY_PROJECTS_DIR` | override `~/.claude/projects` |
+| `FRENCHY_SESSIONS_DIR` | override `~/.claude/sessions` |
+| `FRENCHY_STATE_DIR` | override where the usage capture is written and read |
+| `FRENCHY_INNER_STATUSLINE` | the statusline command the shim wraps |
 
 ---
 
@@ -324,12 +324,12 @@ python3 -m venv .venv
 # Layout
 
 ```
-clawd-meter/
+frenchy-llm-meter/
 ├── install.py                one-shot macOS setup, --doctor, --uninstall
 ├── docs/protocol.md          wire format, shared by both ends
 ├── host/
 │   ├── statusline-hook.sh    captures Claude Code's real usage figures
-│   └── clawd_meter/
+│   └── frenchy_llm_meter/
 │       ├── sessions.py       the live session registry
 │       ├── transcripts.py    parse ~/.claude, dedupe, derive state
 │       ├── usage.py          reads the statusline capture

@@ -6,14 +6,14 @@ inside a single negotiated MTU (the firmware asks for 247).
 
 Implemented in two places that must stay in step:
 
-- `host/clawd_meter/protocol.py` — encoder
+- `host/frenchy_llm_meter/protocol.py` — encoder
 - `firmware/src/protocol.h` — decoder
 
 ## BLE
 
 | | |
 |---|---|
-| Device name | `clawd-meter` |
+| Device name | `frenchy-llm-meter` |
 | Service UUID | `6b1d0001-9a3f-4c6e-b0d2-7f2a5c8e41aa` |
 | State characteristic | `6b1d0002-9a3f-4c6e-b0d2-7f2a5c8e41aa`, write |
 

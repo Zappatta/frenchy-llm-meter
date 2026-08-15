@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# clawd-meter statusline shim.
+# frenchy-llm-meter statusline shim.
 #
 # Claude Code hands its statusline command a JSON blob on stdin that already
 # contains the authoritative plan usage:
@@ -26,18 +26,18 @@
 #     the statusline itself.
 #
 # Install by pointing statusLine.command here and setting
-# CLAWD_INNER_STATUSLINE to whatever it used to point at.
+# FRENCHY_INNER_STATUSLINE to whatever it used to point at.
 
 set -uo pipefail
 
-STATE_DIR="${CLAWD_STATE_DIR:-$HOME/.local/state/clawd-meter}"
+STATE_DIR="${FRENCHY_STATE_DIR:-$HOME/.local/state/frenchy-llm-meter}"
 STATE_FILE="$STATE_DIR/usage.json"
 TMP_FILE="$STATE_DIR/.usage.partial"
-INNER="${CLAWD_INNER_STATUSLINE:-$HOME/.claude/statusline-command.sh}"
+INNER="${FRENCHY_INNER_STATUSLINE:-$HOME/.claude/statusline-command.sh}"
 
 # Seconds between captures. The meter refreshes every few seconds and the plan
 # percentage moves slowly, so there is nothing to gain from writing faster.
-THROTTLE_S="${CLAWD_CAPTURE_THROTTLE:-10}"
+THROTTLE_S="${FRENCHY_CAPTURE_THROTTLE:-10}"
 
 input=$(cat)
 
@@ -68,7 +68,7 @@ if [ -z "$INNER" ]; then
     printf '%s\n' "$(basename "$(pwd)")"
 elif [ "$INNER" = "$self" ] || case "$INNER" in *"$self"*) true ;; *) false ;; esac; then
     # Would recurse forever and hang the statusline. Say so rather than spin.
-    printf 'clawd-meter: CLAWD_INNER_STATUSLINE points at the shim itself\n'
+    printf 'frenchy-llm-meter: FRENCHY_INNER_STATUSLINE points at the shim itself\n'
 else
     inner_out=$(run_inner 2>/dev/null)
     if [ -n "$inner_out" ]; then

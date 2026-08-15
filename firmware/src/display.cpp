@@ -272,7 +272,7 @@ void showWaiting() {
   tft.setTextDatum(middle_center);
   tft.setTextColor(COL_MUTED);
   tft.setFont(&fonts::FreeSansBold12pt7b);
-  tft.drawString("clawd-meter", CENTRE_X, CENTRE_Y - 14);
+  tft.drawString("frenchy-llm-meter", CENTRE_X, CENTRE_Y - 14);
   tft.setFont(&fonts::FreeSans9pt7b);
   tft.drawString("waiting for host", CENTRE_X, CENTRE_Y + 16);
   tft.setFont(&fonts::Font0);

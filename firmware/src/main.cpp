@@ -1,4 +1,4 @@
-// clawd-meter — Claude Code plan usage on a 1.28" round TFT, inside a crab.
+// frenchy-llm-meter — Claude Code plan usage on a 1.28" round TFT, inside a crab.
 //
 // The Mac reads its own transcripts, works out plan utilisation, and writes a
 // 108-byte frame over BLE every few seconds. This end draws it and lights the
@@ -31,14 +31,14 @@ bool wasLinkUp = false;
 void setup() {
   Serial.begin(115200);
   delay(200);
-  Serial.println("\n[clawd-meter] booting");
+  Serial.println("\n[frenchy-llm-meter] booting");
 
   status_led::begin();
   display::begin();
   display::showWaiting();
   ble_link::begin();
 
-  Serial.println("[clawd-meter] ready");
+  Serial.println("[frenchy-llm-meter] ready");
 }
 
 void loop() {
@@ -59,7 +59,7 @@ void loop() {
     lastScreen = now;
 
     if (linkChanged && !linkUp) {
-      Serial.println("[clawd-meter] host went quiet; holding last figures");
+      Serial.println("[frenchy-llm-meter] host went quiet; holding last figures");
     }
     wasLinkUp = linkUp;
 

@@ -3,10 +3,10 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from clawd_meter import usage as usage_module
-from clawd_meter.plan import PlanMeter
-from clawd_meter.models import context_window_for
-from clawd_meter.protocol import (
+from frenchy_llm_meter import usage as usage_module
+from frenchy_llm_meter.plan import PlanMeter
+from frenchy_llm_meter.models import context_window_for
+from frenchy_llm_meter.protocol import (
     FLAG_LIMIT_WARN,
     FLAG_NO_USAGE,
     FLAG_STALE,
@@ -15,7 +15,7 @@ from clawd_meter.protocol import (
     StateFrame,
     decode,
 )
-from clawd_meter.transcripts import SessionState, TranscriptReader
+from frenchy_llm_meter.transcripts import SessionState, TranscriptReader
 
 NOW = datetime(2026, 8, 15, 12, 0, tzinfo=timezone.utc)
 
@@ -272,7 +272,9 @@ def test_payload_round_trips_and_fits_one_mtu():
     frame = StateFrame(
         sessions=[
             SessionFrame(state=1, ctx_pct=62, tokens=1_234_567, label="jigso-mvp"),
-            SessionFrame(state=2, ctx_pct=38, tokens=42, label="clawd-meter"),
+            # Deliberately inside LABEL_LEN: this test is about the round trip,
+            # and truncation has a test of its own.
+            SessionFrame(state=2, ctx_pct=38, tokens=42, label="frenchy-meter"),
         ],
         pct_5h_x10=734,
         pct_7d_x10=210,
@@ -289,7 +291,7 @@ def test_payload_round_trips_and_fits_one_mtu():
     assert back.resets_5h_min == 134
     assert back.resets_7d_min == 4321
     assert back.flags == 0x05
-    assert [s.label for s in back.sessions] == ["jigso-mvp", "clawd-meter"]
+    assert [s.label for s in back.sessions] == ["jigso-mvp", "frenchy-meter"]
     assert back.sessions[0].tokens == 1_234_567
 
 

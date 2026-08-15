@@ -32,9 +32,9 @@ constexpr int8_t PIN_LED = 48;   // onboard WS2812
 // calm rather than as a warning.
 //
 // The boards this was built against are BGR, which is the default. Build with
-// `pio run -e clawd-meter-rgb` for the other variant.
+// `pio run -e frenchy-llm-meter-rgb` for the other variant.
 // ---------------------------------------------------------------------------
-#ifdef CLAWD_PANEL_RGB
+#ifdef FRENCHY_PANEL_RGB
 constexpr bool PANEL_RGB_ORDER = true;
 #else
 constexpr bool PANEL_RGB_ORDER = false;
@@ -128,7 +128,7 @@ constexpr uint32_t COL_LINK_OK = 0x2E7D4F;
 // ---------------------------------------------------------------------------
 // BLE
 // ---------------------------------------------------------------------------
-constexpr char DEVICE_NAME[] = "clawd-meter";
+constexpr char DEVICE_NAME[] = "frenchy-llm-meter";
 constexpr char SERVICE_UUID[] = "6b1d0001-9a3f-4c6e-b0d2-7f2a5c8e41aa";
 constexpr char STATE_CHAR_UUID[] = "6b1d0002-9a3f-4c6e-b0d2-7f2a5c8e41aa";
 

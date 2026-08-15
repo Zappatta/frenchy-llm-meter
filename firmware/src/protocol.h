@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <cstring>
 
-// Mirror of host/clawd_meter/protocol.py. Little-endian, fixed width; the
+// Mirror of host/frenchy_llm_meter/protocol.py. Little-endian, fixed width; the
 // ESP32-S3 is little-endian so the structs map straight onto the wire bytes.
 // Keep the two files in step — docs/protocol.md is the shared reference.
 

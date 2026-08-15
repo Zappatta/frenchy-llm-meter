@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 STATE_DIR = Path(
-    os.environ.get("CLAWD_STATE_DIR", Path.home() / ".local" / "state" / "clawd-meter")
+    os.environ.get("FRENCHY_STATE_DIR", Path.home() / ".local" / "state" / "frenchy-llm-meter")
 )
 USAGE_FILE = STATE_DIR / "usage.json"
 

@@ -14,9 +14,9 @@ FAIL=0
 
 setup() {
     STATE=$(mktemp -d)
-    export CLAWD_STATE_DIR="$STATE"
-    export CLAWD_CAPTURE_THROTTLE=0
-    export CLAWD_INNER_STATUSLINE=/dev/null
+    export FRENCHY_STATE_DIR="$STATE"
+    export FRENCHY_CAPTURE_THROTTLE=0
+    export FRENCHY_INNER_STATUSLINE=/dev/null
 }
 
 teardown() { rm -rf "$STATE"; }
@@ -79,7 +79,7 @@ check "a payload with no rate_limits does not clobber a good reading" '[33,100,5
 teardown
 
 setup
-export CLAWD_CAPTURE_THROTTLE=600
+export FRENCHY_CAPTURE_THROTTLE=600
 send "$(payload 10 100 1)"
 send "$(payload 99 100 1)"
 check "the throttle suppresses a second write inside the window" '[10,100,1]' "$(state)"
@@ -88,11 +88,11 @@ teardown
 # --- the statusline itself must always survive ------------------------------
 echo "statusline output:"
 setup
-export CLAWD_INNER_STATUSLINE=/definitely/not/here
+export FRENCHY_INNER_STATUSLINE=/definitely/not/here
 out=$(printf '%s' "$(payload 1 1 1)" | "$HOOK" 2>/dev/null)
 check "a missing inner script still prints something" "true" "$([ -n "$out" ] && echo true || echo false)"
 
-export CLAWD_INNER_STATUSLINE="$HOOK"
+export FRENCHY_INNER_STATUSLINE="$HOOK"
 out=$(printf '%s' "$(payload 1 1 1)" | timeout 5 "$HOOK" 2>/dev/null; echo "rc=$?")
 check "self-reference is refused rather than hanging" "true" "$(echo "$out" | grep -q 'rc=0' && echo true || echo false)"
 
@@ -104,15 +104,15 @@ inner="$STATE/inner.sh"
 printf '#!/bin/bash\nprintf "INNER:%%s\\n" "$1"\n' > "$inner"
 chmod +x "$inner"
 
-export CLAWD_INNER_STATUSLINE="$inner --theme dark"
+export FRENCHY_INNER_STATUSLINE="$inner --theme dark"
 out=$(printf '%s' "$(payload 1 1 1)" | "$HOOK" 2>/dev/null)
 check "an inner statusline with arguments still runs" "INNER:--theme" "$out"
 
-export CLAWD_INNER_STATUSLINE="cat >/dev/null; printf 'ONPATH\\n'"
+export FRENCHY_INNER_STATUSLINE="cat >/dev/null; printf 'ONPATH\\n'"
 out=$(printf '%s' "$(payload 1 1 1)" | "$HOOK" 2>/dev/null)
 check "an inner statusline that is a command, not a file, still runs" "ONPATH" "$out"
 
-export CLAWD_INNER_STATUSLINE="$inner"
+export FRENCHY_INNER_STATUSLINE="$inner"
 out=$(printf '%s' "$(payload 1 1 1)" | "$HOOK" 2>/dev/null)
 check "a bare executable path still runs" "INNER:" "$out"
 teardown

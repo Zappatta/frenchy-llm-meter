@@ -18,7 +18,7 @@ from bleak.exc import BleakError
 
 log = logging.getLogger(__name__)
 
-DEVICE_NAME = "clawd-meter"
+DEVICE_NAME = "frenchy-llm-meter"
 SERVICE_UUID = "6b1d0001-9a3f-4c6e-b0d2-7f2a5c8e41aa"
 STATE_CHAR_UUID = "6b1d0002-9a3f-4c6e-b0d2-7f2a5c8e41aa"
 
