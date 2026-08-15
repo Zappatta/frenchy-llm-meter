@@ -24,6 +24,23 @@ constexpr int8_t PIN_LED = 48;   // onboard WS2812
 // without modifying the board.
 
 // ---------------------------------------------------------------------------
+// Panel colour order. GC9A01 modules ship wired both ways, and the panel does
+// not report which it is: the driver has to be told. Get it wrong and the red
+// and blue channels swap. Green sits in the middle and is unaffected, so it
+// looks plausible at a glance — the tell is that the amber "working" ring
+// renders blue, and COL_ALERT (0xE03131) renders as 0x3131E0, which reads as
+// calm rather than as a warning.
+//
+// The boards this was built against are BGR, which is the default. Build with
+// `pio run -e clawd-meter-rgb` for the other variant.
+// ---------------------------------------------------------------------------
+#ifdef CLAWD_PANEL_RGB
+constexpr bool PANEL_RGB_ORDER = true;
+#else
+constexpr bool PANEL_RGB_ORDER = false;
+#endif
+
+// ---------------------------------------------------------------------------
 // Display geometry. Active area is 32.40mm across a 240x240 raster.
 // ---------------------------------------------------------------------------
 constexpr int16_t SCREEN_W = 240;

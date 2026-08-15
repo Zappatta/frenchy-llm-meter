@@ -47,7 +47,7 @@ class LGFX : public lgfx::LGFX_Device {
       cfg.dummy_read_bits = 1;
       cfg.readable = false;  // write-only bus
       cfg.invert = true;     // GC9A01 panels are inverted
-      cfg.rgb_order = false;
+      cfg.rgb_order = PANEL_RGB_ORDER;
       cfg.dlen_16bit = false;
       cfg.bus_shared = false;
       _panel.config(cfg);

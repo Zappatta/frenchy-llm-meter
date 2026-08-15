@@ -159,6 +159,22 @@ pio run -t upload    # flash over USB-C
 pio device monitor   # 115200
 ```
 
+### If the colours look wrong
+
+GC9A01 modules ship wired either BGR or RGB, and the panel cannot be asked
+which it is, so it is a build-time choice. The default is BGR.
+
+Flash the default first and look at a session that is working. The ring should
+be **amber**. If it is **blue**, you have the other variant:
+
+```sh
+pio run -e clawd-meter-rgb -t upload
+```
+
+Green is unaffected by the swap — it sits in the middle channel — so a wrong
+setting looks plausible until you notice that `COL_ALERT` renders blue and your
+warnings stop looking like warnings.
+
 ### Wiring
 
 All five display lines sit on the right-hand header in one run, so the ribbon
