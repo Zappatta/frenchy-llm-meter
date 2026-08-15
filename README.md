@@ -35,7 +35,10 @@ A session counts as open if its statusline rendered in the last five minutes.
 That is a better liveness signal than transcript activity, which goes quiet the
 moment you stop typing even though the terminal is still sitting there.
 
-**LED** — one glanceable state:
+**LED** — the onboard WS2812 is **off by default**. Anything moving on a desk
+all day turns into nagging rather than signalling, which is also why the rings
+do not pulse. Set `STATUS_LED_ENABLED` in `firmware/src/config.h` to get it
+back; the scheme is intact:
 
 | State | Colour |
 |---|---|

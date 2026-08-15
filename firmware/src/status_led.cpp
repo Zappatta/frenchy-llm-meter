@@ -10,9 +10,11 @@ namespace {
 Adafruit_NeoPixel pixel(1, PIN_LED, NEO_GRB + NEO_KHZ800);
 
 // Working breathes slowly and unobtrusively. Waiting uses PULSE_PERIOD_MS and
-// asks for attention. Motion lives here and nowhere else — the screen went
-// back to static colour because a ring breathing in your peripheral vision all
-// day is nagging rather than signalling.
+// asks for attention.
+//
+// None of this runs unless STATUS_LED_ENABLED is turned back on: the same
+// objection that stopped the rings pulsing applies to a dot on the desk. The
+// scheme is kept whole rather than deleted so re-enabling it is one line.
 constexpr uint32_t BREATHE_MS = 3200;
 
 using anim::triangle;
@@ -29,6 +31,8 @@ void write(uint8_t r, uint8_t g, uint8_t b, float scale) {
 namespace status_led {
 
 void begin() {
+  // Initialised and cleared even when disabled: a WS2812 powers up in whatever
+  // state it feels like, and dark is the point.
   pixel.begin();
   pixel.setBrightness(255);
   pixel.clear();
@@ -36,6 +40,8 @@ void begin() {
 }
 
 void update(const proto::StateFrame& frame, bool linkUp, uint32_t nowMs) {
+  if (!STATUS_LED_ENABLED) return;
+
   // Red is reserved for things that are actually wrong: no host, a host-side
   // read failure, or genuinely near the plan ceiling. Spending it on "no
   // sessions running" would leave nothing to signal a real problem with.

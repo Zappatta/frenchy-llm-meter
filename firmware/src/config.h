@@ -91,10 +91,18 @@ constexpr int16_t HUB_DOT_Y = -44;  // relative to the hub centre
 // doing — running out of context outranks working or waiting.
 constexpr uint8_t CTX_CRITICAL_PCT = 15;
 
-// The LED's attention-seeking pulse: a session waiting on input, and a link
-// that has gone quiet. The rings deliberately do not use it — a ring that
-// breathes forever in your peripheral vision is nagging rather than
-// signalling, so the screen carries colour and the LED carries motion.
+// The onboard WS2812, off by default.
+//
+// It breathed amber while working and pulsed green while a session waited on
+// input. Both went the way of the ring pulse: something moving on the desk all
+// day is nagging rather than signalling, whether it is a 240px disc or a 5mm
+// dot. Flip this to true to get it back — the code is intact and every state
+// below still means what it says.
+//
+// With it off, session state is carried by ring colour alone.
+constexpr bool STATUS_LED_ENABLED = false;
+
+// Period of the LED's attention-seeking pulse, when it is enabled at all.
 constexpr uint32_t PULSE_PERIOD_MS = 1100;
 
 // ---------------------------------------------------------------------------
