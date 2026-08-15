@@ -8,6 +8,11 @@ namespace ble_link {
 
 void begin();
 
+// Call every loop. Drops a connection whose central has gone silent and starts
+// advertising again — without it the device can sit "connected" forever to a
+// host that no longer exists.
+void tick(uint32_t nowMs);
+
 // True once a payload has arrived recently enough to still be believable.
 bool linkUp(uint32_t nowMs);
 

@@ -12,6 +12,9 @@ volatile uint32_t g_lastPayloadMs = 0;
 volatile bool g_updated = false;
 volatile bool g_connected = false;
 volatile bool g_everReceived = false;
+volatile uint32_t g_connectedAtMs = 0;
+volatile uint16_t g_connHandle = 0xFFFF;
+uint32_t g_lastDropMs = 0;
 
 // Writes arrive on the NimBLE host task, not the Arduino loop task. The frame
 // is small and written whole, so a short critical section is enough to keep
@@ -19,15 +22,17 @@ volatile bool g_everReceived = false;
 portMUX_TYPE g_mux = portMUX_INITIALIZER_UNLOCKED;
 
 class ServerCallbacks : public NimBLEServerCallbacks {
-  void onConnect(NimBLEServer* server) override {
+  void onConnect(NimBLEServer* server, ble_gap_conn_desc* desc) override {
     g_connected = true;
+    g_connHandle = desc->conn_handle;
+    g_connectedAtMs = millis();
     Serial.println("[ble] central connected");
   }
 
   void onDisconnect(NimBLEServer* server) override {
     g_connected = false;
+    g_connHandle = 0xFFFF;
     Serial.println("[ble] central disconnected; advertising again");
-    // Without this the device is invisible after the Mac sleeps.
     NimBLEDevice::startAdvertising();
   }
 };
@@ -88,6 +93,35 @@ bool linkUp(uint32_t nowMs) {
 }
 
 bool hasFrame() { return g_everReceived; }
+
+void tick(uint32_t nowMs) {
+  // A Mac that goes to sleep does not hang up. macOS keeps the link alive in
+  // the controller while the process that owned it goes away, so no disconnect
+  // ever arrives here: NimBLE stays "connected", never advertises, and the
+  // daemon on the other side scans forever for a device that cannot answer.
+  // Observed exactly that after a six-minute idle sleep.
+  //
+  // Silence is the only evidence available, and the display already treats
+  // LINK_TIMEOUT_MS of it as the link being down — so that is the same moment
+  // the connection stops being worth keeping.
+  if (!g_connected) return;
+
+  const uint32_t heardAt =
+      g_lastPayloadMs > g_connectedAtMs ? g_lastPayloadMs : g_connectedAtMs;
+  if (nowMs - heardAt < LINK_TIMEOUT_MS) return;
+  if (g_lastDropMs != 0 && nowMs - g_lastDropMs < LINK_TIMEOUT_MS) return;
+
+  g_lastDropMs = nowMs;
+  Serial.println("[ble] central has gone silent; dropping it and advertising");
+
+  NimBLEServer* server = NimBLEDevice::getServer();
+  if (server != nullptr && g_connHandle != 0xFFFF) {
+    server->disconnect(g_connHandle);
+  }
+  // Belt and braces: if the stack never had a connection to drop, the
+  // disconnect above is a no-op and this is what actually brings us back.
+  NimBLEDevice::startAdvertising();
+}
 
 const proto::StateFrame& frame() { return g_frame; }
 

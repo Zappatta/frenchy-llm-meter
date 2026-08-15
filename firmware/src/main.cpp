@@ -43,6 +43,7 @@ void setup() {
 
 void loop() {
   const uint32_t now = millis();
+  ble_link::tick(now);
   const bool linkUp = ble_link::linkUp(now);
   const bool haveFrame = ble_link::hasFrame();
   const bool freshPayload = ble_link::consumeUpdate();
