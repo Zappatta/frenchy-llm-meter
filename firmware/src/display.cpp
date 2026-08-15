@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstring>
 
+#include "anim.h"
 #include "config.h"
 #include "display.h"
 
@@ -76,10 +77,26 @@ struct Painted {
   uint16_t pct7d = 0xFFFF;
   uint8_t lowestCtx = 0xFF;
   uint8_t flags = 0xFF;
+  uint8_t pulse = 0xFF;
   bool linkUp = false;
   bool haveFrame = false;
   bool valid = false;
 } painted;
+
+// Scale an RGB888 colour toward black.
+uint32_t dim(uint32_t colour, float k) {
+  const uint32_t r = static_cast<uint32_t>(((colour >> 16) & 0xFF) * k);
+  const uint32_t g = static_cast<uint32_t>(((colour >> 8) & 0xFF) * k);
+  const uint32_t b = static_cast<uint32_t>((colour & 0xFF) * k);
+  return (r << 16) | (g << 8) | b;
+}
+
+// Frozen while the link is down: the figures on screen are the last ones the
+// host sent, and animating them would claim a liveness they do not have.
+float pulseLevel(uint32_t nowMs, bool linkUp) {
+  if (!linkUp) return 1.0f;
+  return PULSE_FLOOR + (1.0f - PULSE_FLOOR) * anim::triangle(nowMs, PULSE_PERIOD_MS);
+}
 
 uint32_t colourForRing(uint8_t state, uint8_t ctxPct) {
   // Nearly out of context outranks whatever the session is doing: that is the
@@ -97,19 +114,33 @@ uint32_t colourForRing(uint8_t state, uint8_t ctxPct) {
   }
 }
 
-void drawRing(uint8_t index, uint8_t ctxPct, uint8_t state) {
+// A waiting session is the one asking something of you, so its ring breathes.
+// Everything else holds steady — if every ring moved, none of them would mean
+// anything.
+uint32_t ringColour(uint8_t state, uint8_t ctxPct, float pulse) {
+  const uint32_t base = colourForRing(state, ctxPct);
+  return state == proto::STATE_WAITING ? dim(base, pulse) : base;
+}
+
+// Only the filled portion. The track underneath does not move, so a pulse
+// repaints this and nothing else.
+void drawRingFill(uint8_t index, uint8_t ctxPct, uint32_t colour) {
+  if (ctxPct == 0) return;
+  const int16_t outer = RING_OUTER - index * RING_PITCH;
+  const int16_t inner = outer - RING_THICK;
+  // 12 o'clock is -90 degrees; arcs sweep clockwise from there.
+  const float sweep = 360.0f * ctxPct / 100.0f;
+  tft.fillArc(CENTRE_X, CENTRE_Y, inner, outer, -90.0f, -90.0f + sweep, colour);
+}
+
+void drawRing(uint8_t index, uint8_t ctxPct, uint8_t state, float pulse) {
   const int16_t outer = RING_OUTER - index * RING_PITCH;
   const int16_t inner = outer - RING_THICK;
 
   // Track first, then the filled portion on top of it. The fill is context
   // REMAINING, so a ring drains clockwise as the session fills up.
   tft.fillArc(CENTRE_X, CENTRE_Y, inner, outer, 0.0f, 360.0f, COL_TRACK);
-  if (ctxPct == 0) return;
-
-  // 12 o'clock is -90 degrees; arcs sweep clockwise from there.
-  const float sweep = 360.0f * ctxPct / 100.0f;
-  tft.fillArc(CENTRE_X, CENTRE_Y, inner, outer, -90.0f, -90.0f + sweep,
-              colourForRing(state, ctxPct));
+  drawRingFill(index, ctxPct, ringColour(state, ctxPct, pulse));
 }
 
 void clearRing(uint8_t index) {
@@ -268,7 +299,8 @@ void showWaiting() {
   painted.valid = false;
 }
 
-void render(const proto::StateFrame& frame, bool linkUp, bool haveFrame) {
+void render(const proto::StateFrame& frame, bool linkUp, bool haveFrame,
+            uint32_t nowMs) {
   if (!initialised) return;
 
   // First real frame after the splash: wipe the whole panel once. Everything
@@ -278,15 +310,27 @@ void render(const proto::StateFrame& frame, bool linkUp, bool haveFrame) {
     tft.fillScreen(COL_BG);
   }
 
+  const float pulse = pulseLevel(nowMs, linkUp);
+  // Quantised so an unchanged breath does not cost an SPI write.
+  const uint8_t pulseStep = static_cast<uint8_t>(pulse * 255.0f);
+
   if (ringsChanged(frame)) {
     for (uint8_t i = 0; i < MAX_RINGS; ++i) {
       if (i < frame.count) {
-        drawRing(i, frame.sessions[i].ctx_pct, frame.sessions[i].state);
+        drawRing(i, frame.sessions[i].ctx_pct, frame.sessions[i].state, pulse);
       } else if (painted.valid && i < painted.count) {
         clearRing(i);  // a session went away — wipe its ring
       } else if (!painted.valid) {
         clearRing(i);
       }
+    }
+  } else if (pulseStep != painted.pulse) {
+    // Same geometry, new brightness: repaint the fill of waiting rings only.
+    for (uint8_t i = 0; i < frame.count && i < MAX_RINGS; ++i) {
+      if (frame.sessions[i].state != proto::STATE_WAITING) continue;
+      drawRingFill(i, frame.sessions[i].ctx_pct,
+                   ringColour(frame.sessions[i].state, frame.sessions[i].ctx_pct,
+                              pulse));
     }
   }
 
@@ -307,6 +351,7 @@ void render(const proto::StateFrame& frame, bool linkUp, bool haveFrame) {
   }
   painted.pct5h = frame.pct_5h_x10;
   painted.pct7d = frame.pct_7d_x10;
+  painted.pulse = pulseStep;
   painted.flags = frame.flags;
   painted.linkUp = linkUp;
   painted.haveFrame = haveFrame;

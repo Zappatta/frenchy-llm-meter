@@ -147,6 +147,25 @@ def test_idle_process_downgrades_a_dangling_tool_call_to_waiting(tmp_path, monke
     assert frame.sessions[0].state == int(SessionState.WAITING)
 
 
+def test_a_long_quiet_session_still_reads_as_waiting(tmp_path, monkeypatch):
+    """The "your turn" signal must not expire.
+
+    Transcript state decays to IDLE after IDLE_AFTER, which used to drop the
+    ring to grey and the LED to its dim ember — twenty minutes after Claude
+    finished, which is precisely when someone who walked away needs telling.
+    """
+    directory = _registry(tmp_path, monkeypatch)
+    _session_file(directory, os.getpid(), "sess-a", status="idle")
+    _write(
+        tmp_path / "-Users-x-Code" / "sess-a.jsonl",
+        [_assistant(NOW - timedelta(hours=3), "r1", "m1", stop="end_turn")],
+    )
+
+    frame = PlanMeter().snapshot(TranscriptReader(tmp_path).poll(NOW), NOW)
+
+    assert frame.sessions[0].state == int(SessionState.WAITING)
+
+
 def test_a_closed_session_loses_its_ring_immediately(tmp_path, monkeypatch):
     """Closing a terminal must remove its ring at once.
 

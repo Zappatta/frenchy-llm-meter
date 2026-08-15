@@ -2,21 +2,18 @@
 
 #include <Adafruit_NeoPixel.h>
 
+#include "anim.h"
 #include "config.h"
 
 namespace {
 
 Adafruit_NeoPixel pixel(1, PIN_LED, NEO_GRB + NEO_KHZ800);
 
-// Breathing and pulsing periods, in milliseconds.
-constexpr uint32_t BREATHE_MS = 3200;  // working — slow, unobtrusive
-constexpr uint32_t PULSE_MS = 1100;    // waiting — faster, asks for attention
+// Working breathes slowly and unobtrusively. Waiting uses PULSE_PERIOD_MS,
+// shared with the waiting rings on screen.
+constexpr uint32_t BREATHE_MS = 3200;
 
-// Triangle wave in [0,1]; cheaper than sin() and indistinguishable at this size.
-float triangle(uint32_t now, uint32_t period) {
-  const float phase = static_cast<float>(now % period) / period;
-  return phase < 0.5f ? phase * 2.0f : (1.0f - phase) * 2.0f;
-}
+using anim::triangle;
 
 void write(uint8_t r, uint8_t g, uint8_t b, float scale) {
   pixel.setPixelColor(0, pixel.Color(static_cast<uint8_t>(r * scale),
@@ -41,7 +38,7 @@ void update(const proto::StateFrame& frame, bool linkUp, uint32_t nowMs) {
   // read failure, or genuinely near the plan ceiling. Spending it on "no
   // sessions running" would leave nothing to signal a real problem with.
   if (!linkUp || frame.hostError()) {
-    write(255, 40, 40, 0.20f + 0.60f * triangle(nowMs, PULSE_MS));
+    write(255, 40, 40, 0.20f + 0.60f * triangle(nowMs, PULSE_PERIOD_MS));
     return;
   }
   if (frame.warning()) {
@@ -59,7 +56,7 @@ void update(const proto::StateFrame& frame, bool linkUp, uint32_t nowMs) {
   }
 
   if (anyWaiting) {
-    write(46, 204, 113, 0.25f + 0.75f * triangle(nowMs, PULSE_MS));
+    write(46, 204, 113, 0.25f + 0.75f * triangle(nowMs, PULSE_PERIOD_MS));
   } else if (anyWorking) {
     write(255, 159, 28, 0.12f + 0.45f * triangle(nowMs, BREATHE_MS));
   } else {

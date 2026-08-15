@@ -91,6 +91,15 @@ constexpr int16_t HUB_DOT_Y = -44;  // relative to the hub centre
 // doing — running out of context outranks working or waiting.
 constexpr uint8_t CTX_CRITICAL_PCT = 15;
 
+// A waiting session wants you. Colour alone is a weak "look at me" — you have
+// to already be looking — so its ring breathes, at the same period as the
+// status LED.
+constexpr uint32_t PULSE_PERIOD_MS = 1100;
+
+// How far down the breath dips. Never to black: a ring that disappears reads
+// as a session that closed.
+constexpr float PULSE_FLOOR = 0.35f;
+
 // ---------------------------------------------------------------------------
 // Palette. Deliberately dark: the display has no dimming, so a bright
 // background is a desk lamp that never switches off.

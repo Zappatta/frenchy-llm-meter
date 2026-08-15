@@ -48,21 +48,22 @@ WARN_AT = 85.0
 def _state_for(
     session: Session, live: LiveSession | None, now: datetime
 ) -> SessionState:
-    """Claude Code's own status, corrected against the transcript.
+    """Claude Code's own status, which a transcript cannot report.
 
-    ``status`` says whether the process is working right now, which a
-    transcript cannot: a session killed mid-tool-call leaves a trailing
-    ``tool_use`` stop reason and reads as WORKING forever.
+    For a live session there are only two states worth having: the process is
+    working, or it is waiting for its user. IDLE used to mean "quiet for longer
+    than IDLE_AFTER", which was a reasonable guess at "they have gone away"
+    back when transcripts were the only liveness signal. It is not one now —
+    rings only exist for live processes — and it actively suppressed the alert
+    twenty minutes in, which is exactly when someone who walked away needs
+    telling that Claude is waiting on them.
     """
-    state = session.state(now)
     if live is None:
-        return state
+        # No registry: the old inference, IDLE and all.
+        return session.state(now)
     if live.busy:
         return SessionState.WORKING
-    if state is SessionState.WORKING:
-        # Not processing, so the turn is over whatever the transcript implied.
-        return SessionState.WAITING
-    return state
+    return SessionState.WAITING
 
 
 def _label_for(session: Session, live: LiveSession | None) -> str:
