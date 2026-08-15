@@ -141,7 +141,12 @@ void drawPlanArc(const proto::StateFrame& frame, bool haveFrame) {
   // reading", which is the honest answer without the statusline hook.
   if (!haveFrame || frame.noUsage() || frame.pct_5h_x10 == 0) return;
 
-  const float sweep = 360.0f * frame.pct_5h_x10 / 1000.0f;
+  // Clamped, because the host deliberately sends over-100% figures so an
+  // over-limit state is visible. An unclamped sweep past 360 degrees is drawn
+  // modulo a full turn, so 100.1% collapsed to a sliver and 110% drew as 10% —
+  // the person furthest over their limit saw the emptiest gauge.
+  const uint16_t pct = frame.pct_5h_x10 > 1000 ? 1000 : frame.pct_5h_x10;
+  const float sweep = 360.0f * pct / 1000.0f;
   tft.fillArc(CENTRE_X, CENTRE_Y, PLAN_INNER, PLAN_OUTER, -90.0f, -90.0f + sweep,
               frame.warning() ? COL_ALERT : COL_PLAN);
 }
@@ -193,17 +198,23 @@ void drawHubBody(const proto::StateFrame& frame, bool haveFrame) {
 
   // The 7-day window is the slow-moving one, so it keeps a compact line rather
   // than a band of its own. The 5-hour figure is the outer arc.
-  char footer[16];
+  //
+  // Every variant here has to stay narrow enough to sit inside
+  // HUB_CLEAR_RADIUS at this height. The longer ones ("7d 100% old", "4
+  // sessions") reached radius 70 at their end glyphs — past the r59 circle the
+  // hub clears and into the innermost ring's band, which nothing else
+  // repaints, so they scratched the ring and left fragments behind when the
+  // text later shortened. Staleness is said with colour instead of with three
+  // more characters.
+  char footer[12];
   if (frame.noUsage()) {
-    std::snprintf(footer, sizeof(footer), "%u session%s", frame.count,
-                  frame.count == 1 ? "" : "s");
-  } else if (frame.stale()) {
-    std::snprintf(footer, sizeof(footer), "7d %u%% old", frame.pct_7d_x10 / 10);
+    std::snprintf(footer, sizeof(footer), "no plan");
   } else {
     std::snprintf(footer, sizeof(footer), "7d %u%%", frame.pct_7d_x10 / 10);
   }
   tft.setFont(&fonts::FreeSans9pt7b);
-  tft.drawString(footer, CENTRE_X, CENTRE_Y + 42);
+  tft.setTextColor(frame.stale() ? COL_IDLE : COL_MUTED, COL_BG);
+  tft.drawString(footer, CENTRE_X, CENTRE_Y + 40);
 }
 
 void drawHub(const proto::StateFrame& frame, bool linkUp, bool haveFrame) {

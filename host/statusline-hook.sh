@@ -46,18 +46,36 @@ input=$(cat)
 # below it is expendable.
 
 self=$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/$(basename "${BASH_SOURCE[0]}")
-inner_resolved=$(cd "$(dirname "$INNER")" 2>/dev/null && pwd)/$(basename "$INNER")
 
-if [ "$self" = "$inner_resolved" ]; then
+# INNER is a command line, not necessarily a path. Treating it as a bare path
+# silently replaced anyone's statusline the moment it carried an argument, a
+# leading ~, or was something like `npx ccusage statusline`: none of those pass
+# -x or -f, so they fell through to the directory-name fallback and the real
+# statusline just stopped rendering.
+run_inner() {
+    if [ -x "$INNER" ]; then
+        printf '%s' "$input" | "$INNER"
+    elif [ -f "$INNER" ]; then
+        printf '%s' "$input" | bash "$INNER"
+    else
+        # Arguments, a tilde to expand, a command on PATH — hand it to a shell.
+        printf '%s' "$input" | sh -c "$INNER"
+    fi
+}
+
+if [ -z "$INNER" ]; then
+    # Nothing to wrap: better a plain directory than an empty status bar.
+    printf '%s\n' "$(basename "$(pwd)")"
+elif [ "$INNER" = "$self" ] || case "$INNER" in *"$self"*) true ;; *) false ;; esac; then
     # Would recurse forever and hang the statusline. Say so rather than spin.
     printf 'clawd-meter: CLAWD_INNER_STATUSLINE points at the shim itself\n'
-elif [ -x "$INNER" ]; then
-    printf '%s' "$input" | "$INNER"
-elif [ -f "$INNER" ]; then
-    printf '%s' "$input" | bash "$INNER"
 else
-    # Better a plain directory than an empty status bar.
-    printf '%s\n' "$(basename "$(pwd)")"
+    inner_out=$(run_inner 2>/dev/null)
+    if [ -n "$inner_out" ]; then
+        printf '%s\n' "$inner_out"
+    else
+        printf '%s\n' "$(basename "$(pwd)")"
+    fi
 fi
 
 # --- 2. The capture, throttled and entirely best-effort ----------------------

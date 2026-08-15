@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import logging
 import sys
+from dataclasses import replace
 from datetime import datetime, timezone
 
 from .ble import DEVICE_NAME, Link
@@ -54,10 +55,27 @@ def render(frame: StateFrame) -> str:
     return head + "  " + "  ".join(parts)
 
 
+def _error_frame(last_good: StateFrame | None) -> StateFrame:
+    """Hold the last good figures rather than blanking the meter.
+
+    A bare ``StateFrame(flags=FLAG_HOST_ERROR)`` decodes firmware-side as a
+    perfectly valid frame with no sessions and zero usage, so a host-side read
+    failure made the crab confidently report that nothing was running. Only the
+    LED disagreed. Holding the last reading and flagging it matches what the
+    firmware already does when the link itself drops.
+    """
+    if last_good is None:
+        return StateFrame(flags=FLAG_HOST_ERROR)
+    return replace(
+        last_good, flags=last_good.flags | FLAG_HOST_ERROR | FLAG_STALE
+    )
+
+
 async def run(interval: float, dry_run: bool, device_name: str) -> int:
     reader = TranscriptReader(resolve_root())
     meter = PlanMeter()
     link = None if dry_run else Link(device_name)
+    last_good: StateFrame | None = None
 
     if not hook_installed():
         log.info(
@@ -73,9 +91,10 @@ async def run(interval: float, dry_run: bool, device_name: str) -> int:
             try:
                 sessions = reader.poll(now)
                 frame = meter.snapshot(sessions, now)
+                last_good = frame
             except Exception:  # a bad transcript must not kill the daemon
                 log.exception("failed to read usage")
-                frame = StateFrame(flags=FLAG_HOST_ERROR)
+                frame = _error_frame(last_good)
 
             log.info("%s", render(frame))
 

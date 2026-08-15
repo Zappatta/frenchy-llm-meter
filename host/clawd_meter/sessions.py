@@ -74,6 +74,13 @@ def _alive(pid: int) -> bool:
     return True
 
 
+def _mtime(path: Path) -> float:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
 def _parse(path: Path) -> LiveSession | None:
     try:
         data = json.loads(path.read_text())
@@ -116,12 +123,14 @@ def read(directory: Path | None = None) -> dict[str, LiveSession]:
         return {}
 
     live: dict[str, LiveSession] = {}
-    for path in directory.glob("*.json"):
+    # Sorted by mtime because two files can name the same session if a pid was
+    # reused, and the later write is the truer one. glob() order is whatever
+    # the filesystem hands back, so without this the winner was arbitrary and
+    # a stale "busy" file could outrank the live "idle" one.
+    for path in sorted(directory.glob("*.json"), key=_mtime):
         session = _parse(path)
         if session is None or not _alive(session.pid):
             continue
-        # Two files can name the same session if a pid was reused; the last
-        # one wins, which matches "most recently written file is most true".
         live[session.session_id] = session
     return live
 

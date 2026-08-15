@@ -9,8 +9,10 @@ namespace {
 
 Adafruit_NeoPixel pixel(1, PIN_LED, NEO_GRB + NEO_KHZ800);
 
-// Working breathes slowly and unobtrusively. Waiting uses PULSE_PERIOD_MS,
-// shared with the waiting rings on screen.
+// Working breathes slowly and unobtrusively. Waiting uses PULSE_PERIOD_MS and
+// asks for attention. Motion lives here and nowhere else — the screen went
+// back to static colour because a ring breathing in your peripheral vision all
+// day is nagging rather than signalling.
 constexpr uint32_t BREATHE_MS = 3200;
 
 using anim::triangle;

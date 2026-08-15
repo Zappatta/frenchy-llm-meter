@@ -387,6 +387,16 @@ def offer_usage(dry: bool, decision: bool | None) -> None:
         note("everything else works without this; only the plan footer stays dark")
         return
 
+    # An unreadable settings.json would otherwise be treated as an empty one
+    # and written back containing nothing but our wrapper — permissions, hooks,
+    # env and model silently discarded. There is a backup, but replacing a file
+    # we cannot parse is not ours to decide.
+    if SETTINGS.exists() and read_json(SETTINGS) is None:
+        bad(f"{SETTINGS} is not valid JSON")
+        note("fix or move it, then re-run with --with-usage")
+        note("refusing to rewrite a settings file that cannot be read first")
+        return
+
     wanted = decision if decision is not None else ask(
         "Wire it up?", default=True
     )

@@ -95,6 +95,26 @@ check "a missing inner script still prints something" "true" "$([ -n "$out" ] &&
 export CLAWD_INNER_STATUSLINE="$HOOK"
 out=$(printf '%s' "$(payload 1 1 1)" | timeout 5 "$HOOK" 2>/dev/null; echo "rc=$?")
 check "self-reference is refused rather than hanging" "true" "$(echo "$out" | grep -q 'rc=0' && echo true || echo false)"
+
+# An inner statusline is a command line, not a path. Treating it as a path
+# meant anything with an argument, or a leading tilde, silently stopped
+# rendering the moment someone installed the shim — replaced by a bare
+# directory name, with the capture still working so it looked fine.
+inner="$STATE/inner.sh"
+printf '#!/bin/bash\nprintf "INNER:%%s\\n" "$1"\n' > "$inner"
+chmod +x "$inner"
+
+export CLAWD_INNER_STATUSLINE="$inner --theme dark"
+out=$(printf '%s' "$(payload 1 1 1)" | "$HOOK" 2>/dev/null)
+check "an inner statusline with arguments still runs" "INNER:--theme" "$out"
+
+export CLAWD_INNER_STATUSLINE="cat >/dev/null; printf 'ONPATH\\n'"
+out=$(printf '%s' "$(payload 1 1 1)" | "$HOOK" 2>/dev/null)
+check "an inner statusline that is a command, not a file, still runs" "ONPATH" "$out"
+
+export CLAWD_INNER_STATUSLINE="$inner"
+out=$(printf '%s' "$(payload 1 1 1)" | "$HOOK" 2>/dev/null)
+check "a bare executable path still runs" "INNER:" "$out"
 teardown
 
 echo

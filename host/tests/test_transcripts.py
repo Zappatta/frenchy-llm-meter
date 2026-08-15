@@ -94,6 +94,64 @@ def test_incremental_read_does_not_double_count(tmp_path):
     assert second == first * 2
 
 
+def test_a_partial_trailing_line_does_not_replay_earlier_records(tmp_path):
+    """The offset must commit even when the file ends mid-write.
+
+    tell() is illegal inside `for line in fh`, so the rewind raised OSError,
+    the handler swallowed it along with the offset commit, and every poll
+    re-read the whole unread tail. Deduplication hid it for records carrying
+    ids, which is all of them in practice — hence the unkeyed records here,
+    which are the only way to see the replay directly.
+    """
+    path = tmp_path / "-Users-x-Code" / "sess-a.jsonl"
+    _write(path, [_assistant(NOW, "", "")])
+    with path.open("a") as fh:
+        fh.write('{"type":"assistant","requestId":"r2"')  # a writer mid-flush
+
+    reader = TranscriptReader(tmp_path)
+    first = reader.poll(NOW)[0].window_tokens(NOW)
+    second = reader.poll(NOW)[0].window_tokens(NOW)
+
+    assert first > 0
+    assert second == first
+
+
+def test_a_malformed_record_does_not_wedge_the_reader(tmp_path):
+    """One odd record must cost that record, not the whole poll.
+
+    Anything but a JSONDecodeError used to escape poll(), so the daemon
+    reported a host error and — since the offset never committed — hit the same
+    line again every few seconds, for every session, forever.
+    """
+    path = tmp_path / "-Users-x-Code" / "sess-a.jsonl"
+    _write(
+        path,
+        [
+            {
+                "type": "assistant",
+                "timestamp": NOW.isoformat().replace("+00:00", "Z"),
+                "message": "not a dict",
+            },
+            _assistant(NOW, "r1", "m1"),
+        ],
+    )
+
+    sessions = TranscriptReader(tmp_path).poll(NOW)
+
+    assert sessions[0].window_tokens(NOW) > 0
+
+
+def test_a_timestamp_without_a_zone_is_read_as_utc(tmp_path):
+    """A naive timestamp used to take the daemon down comparing it to `now`."""
+    record = _assistant(NOW, "r1", "m1")
+    record["timestamp"] = NOW.replace(tzinfo=None).isoformat()
+    _write(tmp_path / "-Users-x-Code" / "sess-a.jsonl", [record])
+
+    sessions = TranscriptReader(tmp_path).poll(NOW)
+
+    assert sessions[0].state(NOW) is not SessionState.IDLE
+
+
 def test_partial_trailing_line_is_retried(tmp_path):
     """A half-flushed line must not be consumed and lost."""
     path = tmp_path / "-Users-x-Code" / "sess-a.jsonl"

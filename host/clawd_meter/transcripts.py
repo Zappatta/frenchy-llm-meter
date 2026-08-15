@@ -23,6 +23,7 @@ Two things about the format are load-bearing:
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -30,6 +31,8 @@ from enum import IntEnum
 from pathlib import Path
 
 from .models import context_window_for
+
+log = logging.getLogger(__name__)
 
 DEFAULT_ROOT = Path.home() / ".claude" / "projects"
 
@@ -138,9 +141,13 @@ def _parse_ts(raw: str | None) -> datetime | None:
     if not raw:
         return None
     try:
-        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
-    except ValueError:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
         return None
+    # A timestamp written without a zone would otherwise blow up every
+    # comparison against `now`, which is aware — and one such record used to
+    # take the whole daemon down with it.
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
 class TranscriptReader:
@@ -155,7 +162,10 @@ class TranscriptReader:
     def __init__(self, root: Path | None = None) -> None:
         self.root = root or DEFAULT_ROOT
         self._offsets: dict[Path, tuple[int, int]] = {}
-        self._seen: set[tuple[str, str]] = set()
+        # Timestamped rather than a bare set: this is one entry per API
+        # response ever ingested, in a process that runs for months, and
+        # nothing used to remove them.
+        self._seen: dict[tuple[str, str], datetime] = {}
         self._sessions: dict[str, Session] = {}
 
     def _session_for(self, path: Path) -> Session:
@@ -185,6 +195,21 @@ class TranscriptReader:
         return paths
 
     def _ingest_line(self, session: Session, raw: str, is_subagent: bool) -> None:
+        """Absorb one record, or nothing at all.
+
+        Anything thrown in here used to escape ``poll()`` entirely: the daemon
+        reported a host error, the file offset was never committed, and the
+        same malformed line re-fired every few seconds forever — stalling
+        ingestion for every other session too. One odd record is not worth a
+        wedged meter, so the guard is deliberately broad.
+        """
+        try:
+            self._ingest(session, raw, is_subagent)
+        except Exception:
+            log.debug("skipping unparseable record in %s", session.session_id,
+                      exc_info=True)
+
+    def _ingest(self, session: Session, raw: str, is_subagent: bool) -> None:
         try:
             rec = json.loads(raw)
         except json.JSONDecodeError:
@@ -243,10 +268,10 @@ class TranscriptReader:
         # Deduplicate: one API response is written as several assistant lines
         # sharing a requestId/message.id pair and repeating the same usage.
         key = (rec.get("requestId") or "", message.get("id") or "")
-        if key != ("", "") and key in self._seen:
-            return
         if key != ("", ""):
-            self._seen.add(key)
+            if key in self._seen:
+                return
+            self._seen[key] = ts or datetime.now(timezone.utc)
 
         creation = usage.get("cache_creation") or {}
 
@@ -277,7 +302,12 @@ class TranscriptReader:
         """Read whatever is new and return sessions active in the window."""
         now = now or datetime.now(timezone.utc)
 
-        for path in self._transcript_paths():
+        paths = self._transcript_paths()
+        # Offsets for transcripts that have since been deleted are dead weight
+        # in a daemon that runs for months.
+        self._offsets = {p: v for p, v in self._offsets.items() if p in set(paths)}
+
+        for path in paths:
             try:
                 st = path.stat()
             except OSError:
@@ -294,15 +324,26 @@ class TranscriptReader:
             try:
                 with path.open("r", encoding="utf-8", errors="replace") as fh:
                     fh.seek(offset)
-                    for line in fh:
-                        if line.endswith("\n"):
-                            self._ingest_line(session, line, is_subagent)
-                        else:
-                            # Partial trailing line: a writer is mid-flush.
-                            # Rewind so it is picked up whole next poll.
-                            offset = fh.tell() - len(line.encode("utf-8"))
+                    # readline() rather than `for line in fh`: tell() is
+                    # illegal mid-iteration and raised OSError every time a
+                    # writer was caught mid-flush, which the handler below then
+                    # swallowed along with the offset commit — so the whole
+                    # unread tail was re-ingested on every poll. Taking the
+                    # position before each line also drops the old
+                    # len(line.encode()) arithmetic, which mismeasured any line
+                    # containing bytes that `errors="replace"` had widened.
+                    while True:
+                        position = fh.tell()
+                        line = fh.readline()
+                        if not line:
+                            offset = position
                             break
-                    else:
+                        if not line.endswith("\n"):
+                            # Partial trailing line: leave the offset before it
+                            # so it is picked up whole next poll.
+                            offset = position
+                            break
+                        self._ingest_line(session, line, is_subagent)
                         offset = fh.tell()
             except OSError:
                 continue
@@ -313,7 +354,7 @@ class TranscriptReader:
         return list(self._sessions.values())
 
     def _evict(self, now: datetime) -> None:
-        """Drop events and sessions that have fallen out of the window."""
+        """Drop events, sessions and bookkeeping that fell out of the window."""
         cutoff = now - RETENTION
         for session in list(self._sessions.values()):
             session.events = [e for e in session.events if e.at >= cutoff]
@@ -321,6 +362,10 @@ class TranscriptReader:
                 session.last_activity is None or session.last_activity < cutoff
             ):
                 del self._sessions[session.session_id]
+
+        # A response older than the retention window cannot be re-ingested:
+        # the offset is long past it, and its transcript is no longer read.
+        self._seen = {key: at for key, at in self._seen.items() if at >= cutoff}
 
 
 def resolve_root() -> Path:
