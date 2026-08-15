@@ -1,0 +1,19 @@
+[project]
+name = "clawd-meter"
+version = "0.1.0"
+description = "Push Claude Code plan usage to an ESP32-S3 crab over BLE"
+requires-python = ">=3.11"
+dependencies = ["bleak>=0.22"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+clawd-meter = "clawd_meter.daemon:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["clawd_meter"]

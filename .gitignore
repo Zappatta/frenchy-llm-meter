@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+
+firmware/.pio/
+firmware/compile_commands.json
+
+.DS_Store
+
+firmware/.cache/
