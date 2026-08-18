@@ -15,6 +15,13 @@ void begin();
 // but NO LINK.
 void render(const proto::StateFrame& frame, bool linkUp, bool haveFrame);
 
+// Owns the whole glass — no rings, no hub, no link dot. Call instead of
+// render() once the host has been silent for SCREENSAVER_AFTER_MS. The first
+// call wipes the panel and marks the instrument layout as un-drawn, so the
+// first render() after the link returns repaints everything rather than
+// diffing against a layout the crab has since painted over.
+void renderScreensaver(uint32_t nowMs);
+
 void showWaiting();  // pre-connection splash
 
 }  // namespace display

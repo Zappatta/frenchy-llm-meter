@@ -17,14 +17,20 @@ namespace {
 // The LED animates continuously, so it updates far more often than the screen.
 constexpr uint32_t LED_INTERVAL_MS = 33;  // ~30fps
 
-// Nothing on the glass animates: the LED carries motion, the screen carries
-// colour. render() diffs against what is already drawn, so this is a slow
-// heartbeat rather than a frame rate.
+// While the device is being an instrument, nothing on the glass animates: the
+// screen carries colour, and render() diffs against what is already drawn, so
+// this is a slow heartbeat rather than a frame rate.
+//
+// The screensaver is the one exception, and it is not a state animation — it
+// runs only once the reading is a quarter of an hour stale and there is no
+// longer anything on the glass worth not distracting from. See
+// SCREENSAVER_AFTER_MS.
 constexpr uint32_t SCREEN_INTERVAL_MS = 250;
 
 uint32_t lastLed = 0;
 uint32_t lastScreen = 0;
 bool wasLinkUp = false;
+bool wasDancing = false;
 
 }  // namespace
 
@@ -53,9 +59,30 @@ void loop() {
     status_led::update(ble_link::frame(), linkUp, now);
   }
 
+  // Long enough silence that the held figures have stopped being a reading.
+  // Only for a device that has been fed at some point: one that never has is
+  // showing NO LINK, which is a setup problem and not something to dance over.
+  const bool dancing =
+      haveFrame && ble_link::msSincePayload(now) >= SCREENSAVER_AFTER_MS;
+
+  if (dancing != wasDancing) {
+    Serial.println(dancing ? "[frenchy-llm-meter] host long gone; Clawd is dancing"
+                           : "[frenchy-llm-meter] host is back; redrawing");
+    wasDancing = dancing;
+  }
+
   // Redraw on a new payload, on a link state change, or on the render tick.
+  // The crab has a tick of its own: a dance step is held for CLAWD_POSE_MS and
+  // nothing moves in between, so there is nothing to draw at 250ms intervals.
   const bool linkChanged = linkUp != wasLinkUp;
-  if (freshPayload || linkChanged || (now - lastScreen >= SCREEN_INTERVAL_MS)) {
+  if (dancing) {
+    if (now - lastScreen >= CLAWD_POSE_MS) {
+      lastScreen = now;
+      display::renderScreensaver(now);
+    }
+    wasLinkUp = linkUp;
+  } else if (freshPayload || linkChanged ||
+             (now - lastScreen >= SCREEN_INTERVAL_MS)) {
     lastScreen = now;
 
     if (linkChanged && !linkUp) {

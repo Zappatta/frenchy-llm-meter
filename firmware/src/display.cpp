@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstring>
 
+#include "clawd.h"
 #include "config.h"
 #include "display.h"
 
@@ -80,6 +81,13 @@ struct Painted {
   bool haveFrame = false;
   bool valid = false;
 } painted;
+
+// What the crab painted last tick, in envelope-cell space. Same idea as
+// `painted` above and for the same reason: a full repaint of the crab's
+// bounding box every 140ms tears visibly, and only a handful of cells
+// actually change between two dance steps.
+uint8_t clawdPrev[clawd::ENV_ROWS][clawd::ENV_COLS];
+bool screensaverOn = false;
 
 uint32_t colourForRing(uint8_t state, uint8_t ctxPct) {
   // Nearly out of context outranks whatever the session is doing: that is the
@@ -266,6 +274,45 @@ void begin() {
   initialised = true;
 }
 
+void renderScreensaver(uint32_t nowMs) {
+  if (!initialised) return;
+
+  static uint8_t grid[clawd::ENV_ROWS][clawd::ENV_COLS];
+  clawd::pose(nowMs, grid);
+
+  if (!screensaverOn) {
+    // Trap 3, from a new direction: the rings, the hub and the splash all
+    // paint only their own band, and none of them is going to be called again
+    // until the host comes back. Wipe once on the way in, and invalidate the
+    // instrument's cache so the way out is a full repaint rather than a diff
+    // against a layout that is no longer on the glass.
+    tft.fillScreen(COL_BG);
+    std::memset(clawdPrev, clawd::CELL_EMPTY, sizeof(clawdPrev));
+    painted.valid = false;
+    screensaverOn = true;
+  }
+
+  const int16_t originX = CENTRE_X - (clawd::ENV_COLS * CLAWD_SCALE) / 2;
+  const int16_t originY = CENTRE_Y - (clawd::ENV_ROWS * CLAWD_SCALE) / 2;
+
+  for (uint8_t r = 0; r < clawd::ENV_ROWS; ++r) {
+    for (uint8_t c = 0; c < clawd::ENV_COLS; ++c) {
+      const uint8_t cell = grid[r][c];
+      if (cell == clawdPrev[r][c]) continue;
+
+      uint32_t colour = COL_BG;
+      if (cell == clawd::CELL_SHELL) {
+        colour = COL_CLAWD;
+      } else if (cell == clawd::CELL_EYE) {
+        colour = COL_CLAWD_EYE;
+      }
+      tft.fillRect(originX + c * CLAWD_SCALE, originY + r * CLAWD_SCALE,
+                   CLAWD_SCALE, CLAWD_SCALE, colour);
+      clawdPrev[r][c] = cell;
+    }
+  }
+}
+
 void showWaiting() {
   if (!initialised) return;
   tft.fillScreen(COL_BG);
@@ -281,6 +328,11 @@ void showWaiting() {
 
 void render(const proto::StateFrame& frame, bool linkUp, bool haveFrame) {
   if (!initialised) return;
+
+  // Back to being an instrument. painted.valid was cleared on the way into the
+  // screensaver, so the fillScreen below does the cleanup — but the flag has
+  // to be dropped here or the next entry would skip its own wipe.
+  screensaverOn = false;
 
   // First real frame after the splash: wipe the whole panel once. Everything
   // below paints only its own band, so splash text wider than the hub would

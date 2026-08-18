@@ -16,6 +16,11 @@ void tick(uint32_t nowMs);
 // True once a payload has arrived recently enough to still be believable.
 bool linkUp(uint32_t nowMs);
 
+// How long the host has been silent. Only meaningful once hasFrame(); before
+// that it is simply uptime, which is why the screensaver gates on hasFrame()
+// rather than on this alone.
+uint32_t msSincePayload(uint32_t nowMs);
+
 // True once any valid payload has ever been decoded. Distinguishes "the host
 // went quiet, here are its last figures" from "this device has never been fed".
 bool hasFrame();

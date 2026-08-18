@@ -94,6 +94,8 @@ bool linkUp(uint32_t nowMs) {
 
 bool hasFrame() { return g_everReceived; }
 
+uint32_t msSincePayload(uint32_t nowMs) { return nowMs - g_lastPayloadMs; }
+
 void tick(uint32_t nowMs) {
   // A Mac that goes to sleep does not hang up. macOS keeps the link alive in
   // the controller while the process that owned it goes away, so no disconnect

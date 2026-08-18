@@ -125,6 +125,12 @@ constexpr uint32_t COL_PLAN = 0x9B7DFF;
 // should not compete with the rings for attention.
 constexpr uint32_t COL_LINK_OK = 0x2E7D4F;
 
+// Clawd's own colours, sampled from the official pixel crab. Deliberately not
+// COL_WORKING: the amber means "a session is working" everywhere else on this
+// display, and the screensaver must not look like a reading.
+constexpr uint32_t COL_CLAWD = 0xF0644B;
+constexpr uint32_t COL_CLAWD_EYE = 0x000000;
+
 // ---------------------------------------------------------------------------
 // BLE
 // ---------------------------------------------------------------------------
@@ -137,3 +143,32 @@ constexpr char STATE_CHAR_UUID[] = "6b1d0002-9a3f-4c6e-b0d2-7f2a5c8e41aa";
 // numbers with a warning beat a blank screen when the daemon drops out
 // mid-session. Only a device that has never had a frame says NO LINK outright.
 constexpr uint32_t LINK_TIMEOUT_MS = 60000;
+
+// ---------------------------------------------------------------------------
+// Screensaver
+//
+// A SECOND, LONGER SILENCE THRESHOLD. This is a deliberate exception to the
+// one-timeout rule that governs LINK_TIMEOUT_MS, and it is not a fork of it:
+// LINK_TIMEOUT_MS still does both of its jobs at 60s, unchanged, and still
+// means "stop trusting the link, drop the central, re-advertise". This
+// constant does nothing but decide when the glass stops being an instrument
+// and starts being an ornament. Fifteen minutes, so the red dot and the held
+// figures get a full fourteen of them to be seen first.
+//
+// Gated on having ever had a frame. A device that has never been fed keeps
+// saying NO LINK: that is a setup problem, and a dancing crab would bury it.
+// ---------------------------------------------------------------------------
+constexpr uint32_t SCREENSAVER_AFTER_MS = 900000;  // 15 minutes
+
+// How long a dance step is held. Movement is quantised to whole grid cells,
+// so there is nothing to draw between steps and this is the render tick too.
+constexpr uint32_t CLAWD_POSE_MS = 140;
+
+// Not a multiple of CLAWD_POSE_MS's eight-step cycle (1120ms), so the blink
+// drifts around the dance rather than landing on the same step every time.
+constexpr uint32_t CLAWD_BLINK_EVERY_MS = 3100;
+
+// Cell size in pixels. At 8 the crab is 160x112 and the envelope it dances in
+// is 192x120 — the far corner of that sits at radius 113 on a 120px panel, so
+// this is close to as large as it goes. Check the geometry before raising it.
+constexpr int16_t CLAWD_SCALE = 8;
