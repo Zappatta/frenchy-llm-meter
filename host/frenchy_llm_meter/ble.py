@@ -32,6 +32,22 @@ MAX_RECONNECT_DELAY = 30.0
 # a process that looks healthy and does nothing.
 CONNECT_TIMEOUT = 20.0
 
+# The same trap as CONNECT_TIMEOUT, one call along. A response=True write waits
+# for the peripheral to acknowledge, and macOS does not report a link that died
+# in the controller — so the ack never arrives, the await never returns, and the
+# daemon wedges with the process alive at 0% CPU and not one line in the log.
+# Observed exactly that: connected 15:47:09, then two hours of silence.
+#
+# Generous rather than tight: one payload every few seconds is not a throughput
+# problem, and a slow ack is worth waiting for. It is an upper bound on being
+# stuck, not a latency target.
+WRITE_TIMEOUT = 10.0
+
+# Disconnect is an await on the same stack and hangs for the same reason. It is
+# on the recovery path, so hanging here strands the daemon in the one place it
+# was trying to get itself out of trouble.
+DISCONNECT_TIMEOUT = 5.0
+
 
 class Link:
     """Maintains a connection to the device, reconnecting as needed."""
@@ -84,7 +100,7 @@ class Link:
             # A timed-out connect can still complete underneath us, leaving a
             # link nobody owns and the crab refusing the next attempt.
             try:
-                await client.disconnect()
+                await asyncio.wait_for(client.disconnect(), timeout=DISCONNECT_TIMEOUT)
             except (BleakError, OSError, asyncio.TimeoutError):
                 pass
             await asyncio.sleep(self._backoff)
@@ -102,7 +118,10 @@ class Link:
             # Write with response: one payload every few seconds is nowhere
             # near a throughput problem, and the ack tells us the link is
             # genuinely alive rather than merely believed to be.
-            await self._client.write_gatt_char(STATE_CHAR_UUID, payload, response=True)
+            await asyncio.wait_for(
+                self._client.write_gatt_char(STATE_CHAR_UUID, payload, response=True),
+                timeout=WRITE_TIMEOUT,
+            )
             return True
         except (BleakError, asyncio.TimeoutError, OSError) as exc:
             log.warning("write failed: %s", exc)
@@ -114,6 +133,6 @@ class Link:
         if client is None:
             return
         try:
-            await client.disconnect()
-        except (BleakError, OSError):
+            await asyncio.wait_for(client.disconnect(), timeout=DISCONNECT_TIMEOUT)
+        except (BleakError, OSError, asyncio.TimeoutError):
             pass
