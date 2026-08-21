@@ -7,6 +7,7 @@
 #include <Arduino.h>
 
 #include "ble_link.h"
+#include "burn.h"
 #include "config.h"
 #include "display.h"
 #include "protocol.h"
@@ -53,6 +54,12 @@ void loop() {
   const bool linkUp = ble_link::linkUp(now);
   const bool haveFrame = ble_link::hasFrame();
   const bool freshPayload = ble_link::consumeUpdate();
+
+  // Fold every new figure into the burn history before anything draws, so the
+  // hub's trace and the arc above it are describing the same payload.
+  if (freshPayload) {
+    burn::sample(now, ble_link::frame().pct_5h_x10);
+  }
 
   if (now - lastLed >= LED_INTERVAL_MS) {
     lastLed = now;

@@ -172,3 +172,27 @@ constexpr uint32_t CLAWD_BLINK_EVERY_MS = 3100;
 // is 192x120 — the far corner of that sits at radius 113 on a 120px panel, so
 // this is close to as large as it goes. Check the geometry before raising it.
 constexpr int16_t CLAWD_SCALE = 8;
+
+// ---------------------------------------------------------------------------
+// Burn-rate sparkline — the hub's headline since 2026-08-20
+//
+// Replaced the lowest-context number, which repeated what the innermost ring
+// already showed. The rings and the plan arc are both levels; this is the only
+// thing on the glass carrying a trend, so it plots rate rather than total:
+// a flat floor while idle, a spike where a burst landed.
+//
+// Thirty two-minute buckets is the last hour. Three pixels a bucket puts the
+// chart at 90px wide, and its far corner at radius 50 against a
+// HUB_CLEAR_RADIUS of 59 — inside, but check the corner before widening it.
+// ---------------------------------------------------------------------------
+constexpr uint8_t BURN_BUCKETS = 30;
+constexpr uint32_t BURN_BUCKET_MS = 120000;  // 2 minutes
+
+constexpr int16_t SPARK_COL_W = 3;
+constexpr int16_t SPARK_W = BURN_BUCKETS * SPARK_COL_W;  // 90
+constexpr int16_t SPARK_H = 30;
+constexpr int16_t SPARK_TOP = -22;  // relative to the hub centre; baseline +8
+
+// Floor for the autoscale, in pct_5h_x10 per bucket. Without it a completely
+// quiet hour scales its own rounding noise to full height and reads as chaos.
+constexpr uint16_t BURN_SCALE_MIN = 10;  // 1.0% in one bucket

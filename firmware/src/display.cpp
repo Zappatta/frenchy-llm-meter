@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstring>
 
+#include "burn.h"
 #include "clawd.h"
 #include "config.h"
 #include "display.h"
@@ -75,7 +76,7 @@ struct Painted {
   uint8_t state[proto::MAX_SESSIONS] = {0xFF, 0xFF, 0xFF, 0xFF};
   uint16_t pct5h = 0xFFFF;
   uint16_t pct7d = 0xFFFF;
-  uint8_t lowestCtx = 0xFF;
+  uint32_t burnRev = 0xFFFFFFFF;
   uint8_t flags = 0xFF;
   bool linkUp = false;
   bool haveFrame = false;
@@ -126,18 +127,35 @@ void clearRing(uint8_t index) {
   tft.fillArc(CENTRE_X, CENTRE_Y, inner, outer, 0.0f, 360.0f, COL_BG);
 }
 
-// Lowest context remaining across the live sessions — the one that runs out
-// first, and so the number worth putting in the middle.
-uint8_t lowestContext(const proto::StateFrame& frame, bool& found) {
-  uint8_t lowest = 100;
-  found = false;
-  for (uint8_t i = 0; i < frame.count; ++i) {
-    if (!found || frame.sessions[i].ctx_pct < lowest) {
-      lowest = frame.sessions[i].ctx_pct;
-      found = true;
-    }
+// The burn-rate trace. Rate, not level: the rings and the plan arc already
+// carry levels, and neither can show that the last hour was quiet until a
+// burst landed twenty minutes ago.
+//
+// Autoscaled to the hour's own peak with a floor, so the shape is always
+// legible without the height meaning a fixed quantity. The height is
+// deliberately not a reading — the arc outside is the reading.
+void drawSparkline(const proto::StateFrame& frame) {
+  const int16_t x0 = CENTRE_X - SPARK_W / 2;
+  const int16_t top = CENTRE_Y + SPARK_TOP;
+  const int16_t base = top + SPARK_H;
+
+  // Baseline always drawn, so an hour with nothing in it still reads as "there
+  // is a trace here and it is flat" rather than as a failed redraw.
+  tft.drawFastHLine(x0, base, SPARK_W, COL_TRACK);
+
+  const uint16_t scale = burn::peak();
+  const uint16_t* b = burn::buckets();
+  const uint32_t colour = frame.warning() ? COL_ALERT
+                        : frame.stale()   ? COL_IDLE
+                                          : COL_PLAN;
+
+  for (uint8_t i = 0; i < BURN_BUCKETS; ++i) {
+    if (b[i] == 0) continue;
+    int16_t h = static_cast<int16_t>(static_cast<uint32_t>(b[i]) * SPARK_H / scale);
+    if (h < 1) h = 1;  // a bucket that saw anything at all must be visible
+    if (h > SPARK_H) h = SPARK_H;
+    tft.fillRect(x0 + i * SPARK_COL_W, base - h, SPARK_COL_W, h, colour);
   }
-  return lowest;
 }
 
 // The 5-hour plan window, as the outermost band. Unlike a session ring this
@@ -177,10 +195,7 @@ void drawHubBody(const proto::StateFrame& frame, bool haveFrame) {
     return;
   }
 
-  bool haveContext = false;
-  const uint8_t ctx = lowestContext(frame, haveContext);
-
-  if (!haveContext) {
+  if (frame.count == 0) {
     tft.setFont(&fonts::FreeSansBold12pt7b);
     tft.setTextColor(COL_MUTED);
     tft.drawString("NO", CENTRE_X, CENTRE_Y - 12);
@@ -188,21 +203,7 @@ void drawHubBody(const proto::StateFrame& frame, bool haveFrame) {
     return;
   }
 
-  // The headline: context left, in a 48px seven-segment face so it reads from
-  // across the room. Three digits span ~84px and the hub is only 89px wide at
-  // the top of the glyphs, so a full 100% steps down a size rather than
-  // clipping against the circle.
-  // Two colours, not one: the seven-segment face draws its unlit segments in
-  // the background colour, and left transparent they show up as ghost strokes
-  // beside the digits.
-  tft.setTextColor(ctx <= CTX_CRITICAL_PCT ? COL_ALERT : COL_TEXT, COL_BG);
-  tft.setFont(ctx >= 100 ? &fonts::FreeSansBold18pt7b
-                         : static_cast<const lgfx::IFont*>(&fonts::Font7));
-  tft.drawString(String(ctx), CENTRE_X, CENTRE_Y - 10);
-
-  tft.setFont(&fonts::FreeSansBold9pt7b);
-  tft.setTextColor(COL_MUTED);
-  tft.drawString("% CTX", CENTRE_X, CENTRE_Y + 24);
+  drawSparkline(frame);
 
   // The 7-day window is the slow-moving one, so it keeps a compact line rather
   // than a band of its own. The 5-hour figure is the outer arc.
@@ -255,8 +256,7 @@ bool hubChanged(const proto::StateFrame& frame, bool linkUp, bool haveFrame) {
   // Deliberately not the 5h percentage or its countdown: those live on the
   // outer arc now, and keying the hub to a value that ticks every minute would
   // repaint the centre number for no reason.
-  bool found = false;
-  return !painted.valid || painted.lowestCtx != lowestContext(frame, found) ||
+  return !painted.valid || painted.burnRev != burn::revision() ||
          painted.pct7d != frame.pct_7d_x10 || painted.flags != frame.flags ||
          painted.linkUp != linkUp || painted.haveFrame != haveFrame ||
          painted.count != frame.count;
@@ -361,8 +361,7 @@ void render(const proto::StateFrame& frame, bool linkUp, bool haveFrame) {
     drawHub(frame, linkUp, haveFrame);
   }
 
-  bool found = false;
-  painted.lowestCtx = lowestContext(frame, found);
+  painted.burnRev = burn::revision();
   painted.count = frame.count;
   for (uint8_t i = 0; i < proto::MAX_SESSIONS; ++i) {
     painted.ctx[i] = i < frame.count ? frame.sessions[i].ctx_pct : 0;
