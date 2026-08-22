@@ -124,6 +124,22 @@ def main(argv: list[str] | None = None) -> int:
         help="print state to stdout instead of connecting over BLE",
     )
     parser.add_argument("--device", default=DEVICE_NAME, help="BLE device name")
+    parser.add_argument(
+        "--probe",
+        action="store_true",
+        help="diagnose a link that will not come up: report how far the connect "
+        "sequence gets, then exit. Stop the daemon first — two centrals "
+        "competing for one connection slot muddies the result.",
+    )
+    parser.add_argument(
+        "--probe-attempts", type=int, default=3, help="connects to try with --probe"
+    )
+    parser.add_argument(
+        "--probe-write",
+        action="store_true",
+        help="with --probe, also test the write path. Opt-in: it touches the "
+        "characteristic the daemon owns.",
+    )
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
 
@@ -134,6 +150,12 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     try:
+        if args.probe:
+            from .probe import run as probe_run
+
+            return asyncio.run(
+                probe_run(args.probe_attempts, args.probe_write, 3.0, args.device)
+            )
         return asyncio.run(run(args.interval, args.dry_run, args.device))
     except KeyboardInterrupt:
         return 0
