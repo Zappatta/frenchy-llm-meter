@@ -124,6 +124,9 @@ Within a few seconds the crab should show rings and a green dot.
 python3 install.py --doctor      # why isn't it updating?
 python3 install.py --uninstall   # stop the service, restore your statusline
 python3 install.py --dry-run     # print what would change, touch nothing
+
+# if doctor is clean but the link still is not:
+host/.venv/bin/python -m frenchy_llm_meter --probe   # where does the connect die?
 ```
 
 ## 6. Optional: plan usage
@@ -154,6 +157,27 @@ footer reads `no plan`.
 session registry, service, statusline wrapper, capture freshness, whether the
 capture actually contains rate limits — and tells you which link is broken.
 
+**If doctor is clean and it still is not working, or the log is full of
+`connect failed`, use `--probe`.** Doctor checks everything on this machine and
+stops at the radio; it cannot see where a BLE connect gives up. The probe can.
+Stop the service first, or the two will fight over the crab's single connection
+slot:
+
+```sh
+launchctl bootout gui/$(id -u)/io.frenchyllmmeter.daemon
+host/.venv/bin/python -m frenchy_llm_meter --probe
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/io.frenchyllmmeter.daemon.plist
+```
+
+It reports the furthest stage each connect reached, and whether the crab or the
+Mac closed the link. That is the fact worth having: a connect that dies at
+`connecting` is a different problem from one that dies at
+`retrieving_services`, and `connect failed:` on its own cannot tell them apart.
+
+**Do not read anything into the RSSI it prints.** It is context, not a verdict.
+This link has completed the full sequence 3/3 at -95 dBm and failed at -80. If
+the connect reaches service discovery, the signal was sufficient by definition.
+
 **The colours look wrong.** GC9A01 modules ship wired either BGR or RGB and the
 panel cannot be asked which it is, so it is a build-time choice. The default is
 BGR. Flash the default, then look at a session that is working: the ring should
@@ -167,8 +191,10 @@ Green is unaffected by the swap — it sits in the middle channel — so a wrong
 setting looks plausible until you notice `COL_ALERT` rendering blue and your
 warnings no longer looking like warnings.
 
-**It says NO LINK.** The device has never received a frame. Check the service
-is running (`--doctor`), and that you granted Bluetooth permission.
+**It says NO LINK.** The device has never received a frame *since it booted* —
+not merely that the link dropped. Check the service is running (`--doctor`) and
+that you granted Bluetooth permission. If both are fine, run `--probe`: a device
+that advertises but drops every connect shows NO LINK indefinitely.
 
 **The figures are frozen and the dot is red.** The link dropped; the last known
 figures are being held deliberately rather than blanking the screen. If the Mac
@@ -292,6 +318,7 @@ python3 -m venv .venv
 
 .venv/bin/python -m frenchy_llm_meter --dry-run     # print to stdout, no BLE
 .venv/bin/python -m frenchy_llm_meter               # connect and push
+.venv/bin/python -m frenchy_llm_meter --probe       # diagnose a failing link
 .venv/bin/python -m pytest tests/ -q
 ```
 

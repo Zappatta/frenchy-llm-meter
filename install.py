@@ -63,7 +63,7 @@ POLL_INTERVAL = "5"
 
 # How long to sit in the foreground watching the daemon before handing over to
 # launchd. Long enough for a BLE scan to find the crab, or to fail visibly.
-PROBE_SECONDS = 20
+FIRST_RUN_SECONDS = 20
 
 
 # --------------------------------------------------------------------------
@@ -242,27 +242,33 @@ def build_venv(dry: bool) -> None:
     ok("frenchy-llm-meter and its dependencies installed")
 
 
-def probe(dry: bool) -> None:
+def first_run(dry: bool) -> None:
     """Run the daemon in the foreground once, before launchd ever touches it.
 
     Two jobs. It proves the pipeline end to end while the user is watching, and
     it makes macOS raise its Bluetooth permission prompt against this terminal.
     A launchd job has no window to prompt from, so a background-first install
     can sit there permanently denied with nothing to click.
+
+    Not to be confused with `--probe`, which is the daemon's link diagnostic
+    (`python -m frenchy_llm_meter --probe`). This one is part of installing and
+    runs the real daemon; that one answers where a failing connect dies. They
+    were both called "probe" until 2026-09-01.
     """
     step("Starting the daemon once, in the foreground")
 
     if dry:
         note(f"would stop any running service, then run the daemon for "
-             f"{PROBE_SECONDS}s to trigger the Bluetooth prompt")
+             f"{FIRST_RUN_SECONDS}s to trigger the Bluetooth prompt")
         return
 
     # Only one central can hold the crab. An already-installed daemon left
-    # running through the probe blocks it, and the probe then reports a device
-    # that is sitting right there as missing.
+    # running through this blocks it, and the first run then reports a device
+    # that is sitting right there as missing. `--probe` has the same
+    # constraint, for the same reason.
     uid = os.getuid()
     if run(["launchctl", "bootout", f"gui/{uid}/{LABEL}"], check=False).returncode == 0:
-        ok("stopped the running service so the probe can reach the meter")
+        ok("stopped the running service so the first run can reach the meter")
 
     print("    macOS may ask for Bluetooth permission now — say yes, or the")
     print("    meter can never be reached.\n")
@@ -273,7 +279,7 @@ def probe(dry: bool) -> None:
         stderr=subprocess.STDOUT,
         text=True,
     )
-    deadline = time.monotonic() + PROBE_SECONDS
+    deadline = time.monotonic() + FIRST_RUN_SECONDS
     saw_connection = False
     try:
         while time.monotonic() < deadline:
@@ -509,6 +515,9 @@ def doctor() -> int:
             if quiet > 60:
                 bad(f"process is up but has not logged for {quiet}s — wedged")
                 note(f"restart it: launchctl kickstart -k gui/{uid}/{LABEL}")
+                note("that clears it but says nothing about why. To find out, "
+                     "stop the service and run:")
+                note(f"  {VENV_PY} -m frenchy_llm_meter --probe")
                 problems += 1
             else:
                 ok(f"last logged {quiet}s ago")
@@ -562,6 +571,15 @@ def doctor() -> int:
     print()
     if problems:
         print(f"  {_RED}{problems} problem(s){_OFF}")
+        # Everything above checks the pipeline on this machine. If all of it
+        # passes and the glass is still wrong, or the log is full of
+        # "connect failed", the remaining question is where the BLE connect
+        # dies — which is the one thing doctor cannot see from here.
+        print()
+        note("if the link itself is suspect, stop the service and run:")
+        note(f"  {VENV_PY} -m frenchy_llm_meter --probe")
+        note("it reports how far the connect gets, which says whether to look")
+        note("at the Mac, the crab, or neither.")
     else:
         print(f"  {_GREEN}all good{_OFF}")
     return 1 if problems else 0
@@ -626,7 +644,7 @@ def main(argv: list[str] | None = None) -> int:
     # the service does is already the finished configuration.
     offer_usage(args.dry_run, decision)
 
-    probe(args.dry_run)
+    first_run(args.dry_run)
     install_agent(args.dry_run)
 
     step("Done")
