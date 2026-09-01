@@ -10,11 +10,14 @@ What does separate them is how far the connect sequence got. `bleak` already
 narrates every step at DEBUG; this captures that narration, maps it onto named
 stages, and reports the furthest one reached. The stage is the diagnosis:
 
-  discovered            -> nothing is wrong with the radio or advertising
-  connected             -> the link layer is fine; suspect GATT or the peer
-  services_discovered   -> the service definition is being served correctly
-  characteristics_found -> the server is complete and the fault is elsewhere
-  wrote                 -> the whole path works; the problem is not the link
+The stage names below are exactly the names in STAGES, and must stay that
+way: they are what gets printed, so they are what someone greps for.
+
+  connecting                 -> range, or the peer is not accepting
+  connected                  -> link layer fine; the peer is closing it
+  retrieving_services        -> GATT server, or a stale connection
+  services_discovered        -> the service definition serves correctly
+  retrieving_characteristics -> the server is complete; look elsewhere
 
 Read-only by default. The write test is opt-in because it exercises the
 characteristic the daemon owns, and a probe should not be able to disturb

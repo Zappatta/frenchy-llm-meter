@@ -54,3 +54,18 @@ def test_stages_are_ordered_worst_to_best():
         "services_discovered",
         "retrieving_characteristics",
     ]
+
+
+def test_the_docstring_names_the_real_stages():
+    """The stage names are the diagnosis, so they are also what people grep for.
+
+    The first version of this module documented five stages that existed
+    nowhere in the code — only two of the names matched. The printed output was
+    correct, so nothing failed; a grep for a documented name simply returned
+    nothing and read as a broken tool.
+    """
+    from frenchy_llm_meter import probe
+
+    assert probe.__doc__ is not None
+    for name, _ in probe.STAGES:
+        assert name in probe.__doc__, f"stage {name!r} is not in the module docstring"
