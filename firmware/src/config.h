@@ -196,3 +196,23 @@ constexpr int16_t SPARK_TOP = -22;  // relative to the hub centre; baseline +8
 // Floor for the autoscale, in pct_5h_x10 per bucket. Without it a completely
 // quiet hour scales its own rounding noise to full height and reads as chaos.
 constexpr uint16_t BURN_SCALE_MIN = 10;  // 1.0% in one bucket
+
+// The same floor in credits mode, where a bucket is cents spent in it.
+constexpr uint16_t BURN_SCALE_MIN_CENTS = 10;  // 10 cents in two minutes
+
+// ---------------------------------------------------------------------------
+// Credits-mode hub
+//
+// The dollar figure is the headline, so it takes the top of the hub and the
+// sparkline shrinks to sit between it and the month footer. All relative to
+// the hub centre. Checked against HUB_CLEAR_RADIUS (59): "$12.40" in 12pt
+// bold is ~72px wide at y-20, where the clear circle is ~103px across; the
+// sparkline's bottom corners sit at radius ~50.
+// ---------------------------------------------------------------------------
+constexpr int16_t CREDITS_TODAY_Y = -20;
+// Cleared around the figure whenever it is redrawn on its own, so a shorter
+// string leaves nothing of a longer one behind. Within the clear circle at
+// that height, and wider than any formatUsd() result.
+constexpr int16_t CREDITS_TODAY_PAD = 96;
+constexpr int16_t CREDITS_SPARK_TOP = 6;
+constexpr int16_t CREDITS_SPARK_H = 18;

@@ -29,12 +29,13 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import IntEnum
 from pathlib import Path
+from typing import Callable
 
 from .models import context_window_for
+from .paths import claude_dir
 
 log = logging.getLogger(__name__)
 
-DEFAULT_ROOT = Path.home() / ".claude" / "projects"
 
 # A session whose transcript has been quiet for longer than this is shown as
 # idle rather than waiting — Claude finished, but the user has walked away.
@@ -66,6 +67,8 @@ class _Event:
     cache_write_5m: int
     cache_write_1h: int
     cache_read: int
+    fast: bool = False
+    web_searches: int = 0
 
     @property
     def tokens(self) -> int:
@@ -159,8 +162,16 @@ class TranscriptReader:
     past the end of a shorter file.
     """
 
-    def __init__(self, root: Path | None = None) -> None:
-        self.root = root or DEFAULT_ROOT
+    def __init__(
+        self,
+        root: Path | None = None,
+        on_event: Callable[[tuple[str, str], _Event], None] | None = None,
+    ) -> None:
+        self.root = root or resolve_root()
+        # Told about every deduplicated response as it is read, including ones
+        # older than RETENTION that are about to be evicted. The cost tracker
+        # needs those: they are the history its baseline is made of.
+        self._on_event = on_event
         self._offsets: dict[Path, tuple[int, int]] = {}
         # Timestamped rather than a bare set: this is one entry per API
         # response ever ingested, in a process that runs for months, and
@@ -286,17 +297,30 @@ class TranscriptReader:
             )
             session.last_model = message.get("model") or session.last_model
 
-        session.events.append(
-            _Event(
-                at=ts or datetime.now(timezone.utc),
-                model=message.get("model") or "",
-                input_tokens=int(usage.get("input_tokens") or 0),
-                output_tokens=int(usage.get("output_tokens") or 0),
-                cache_write_5m=int(creation.get("ephemeral_5m_input_tokens") or 0),
-                cache_write_1h=int(creation.get("ephemeral_1h_input_tokens") or 0),
-                cache_read=int(usage.get("cache_read_input_tokens") or 0),
-            )
+        write_5m = int(creation.get("ephemeral_5m_input_tokens") or 0)
+        write_1h = int(creation.get("ephemeral_1h_input_tokens") or 0)
+        if not creation:
+            # Older transcripts carry only the total. The 5-minute TTL was the
+            # only one Claude Code used then, so that is where it belongs.
+            write_5m = int(usage.get("cache_creation_input_tokens") or 0)
+        server_tools = usage.get("server_tool_use") or {}
+
+        event = _Event(
+            at=ts or datetime.now(timezone.utc),
+            model=message.get("model") or "",
+            input_tokens=int(usage.get("input_tokens") or 0),
+            output_tokens=int(usage.get("output_tokens") or 0),
+            cache_write_5m=write_5m,
+            cache_write_1h=write_1h,
+            cache_read=int(usage.get("cache_read_input_tokens") or 0),
+            fast=usage.get("speed") == "fast",
+            web_searches=int(server_tools.get("web_search_requests") or 0)
+            if isinstance(server_tools, dict)
+            else 0,
         )
+        session.events.append(event)
+        if self._on_event is not None:
+            self._on_event(key, event)
 
     def poll(self, now: datetime | None = None) -> list[Session]:
         """Read whatever is new and return sessions active in the window."""
@@ -370,4 +394,4 @@ class TranscriptReader:
 
 def resolve_root() -> Path:
     override = os.environ.get("FRENCHY_PROJECTS_DIR")
-    return Path(override).expanduser() if override else DEFAULT_ROOT
+    return Path(override).expanduser() if override else claude_dir() / "projects"

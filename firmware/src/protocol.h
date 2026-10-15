@@ -6,11 +6,17 @@
 // Mirror of host/frenchy_llm_meter/protocol.py. Little-endian, fixed width; the
 // ESP32-S3 is little-endian so the structs map straight onto the wire bytes.
 // Keep the two files in step — docs/protocol.md is the shared reference.
+//
+// Two versions on the wire, both accepted. v1 is plan mode and has never
+// changed. v2 is credits mode: the same header with today's and this month's
+// spend appended. One firmware handles either, so nothing about the account
+// type is decided at flash time — the host says which it is on every frame.
 
 namespace proto {
 
 constexpr uint8_t MAGIC = 0xC1;
-constexpr uint8_t VERSION = 1;
+constexpr uint8_t VERSION = 1;          // plan mode
+constexpr uint8_t VERSION_CREDITS = 2;  // credits mode
 constexpr uint8_t MAX_SESSIONS = 4;
 constexpr uint8_t LABEL_LEN = 16;
 
@@ -18,6 +24,8 @@ constexpr uint8_t FLAG_LIMIT_WARN = 1 << 0;
 constexpr uint8_t FLAG_HOST_ERROR = 1 << 1;
 constexpr uint8_t FLAG_STALE = 1 << 2;     // figures are old, not current
 constexpr uint8_t FLAG_NO_USAGE = 1 << 3;  // statusline shim not installed
+constexpr uint8_t FLAG_CREDITS = 1 << 4;   // gauge is spend, not a plan window
+constexpr uint8_t FLAG_NO_BASELINE = 1 << 5;  // credits: nothing to scale against yet
 
 enum State : uint8_t {
   STATE_IDLE = 0,
@@ -38,6 +46,12 @@ struct Header {
   uint16_t resets_7d_min;
 };
 
+// v2 only, straight after Header.
+struct CreditsExt {
+  uint32_t today_cents;  // spent since local midnight
+  uint32_t month_cents;  // spent since the 1st
+};
+
 struct SessionRecord {
   uint8_t state;
   uint8_t ctx_pct;   // context window remaining, 0..100
@@ -48,9 +62,11 @@ struct SessionRecord {
 #pragma pack(pop)
 
 static_assert(sizeof(Header) == 12, "header must be 12 bytes");
+static_assert(sizeof(CreditsExt) == 8, "credits extension must be 8 bytes");
 static_assert(sizeof(SessionRecord) == 24, "session record must be 24 bytes");
 
-constexpr size_t MAX_PAYLOAD = sizeof(Header) + sizeof(SessionRecord) * MAX_SESSIONS;
+constexpr size_t MAX_PAYLOAD =
+    sizeof(Header) + sizeof(CreditsExt) + sizeof(SessionRecord) * MAX_SESSIONS;
 
 struct SessionView {
   uint8_t state;
@@ -66,8 +82,15 @@ struct StateFrame {
   uint16_t pct_7d_x10;
   uint16_t resets_5h_min;
   uint16_t resets_7d_min;
+  uint32_t today_cents;  // credits mode only; zero otherwise
+  uint32_t month_cents;
   SessionView sessions[MAX_SESSIONS];
 
+  // In credits mode pct_5h_x10 is today as a share of a normal day (or of
+  // the daily budget) and resets_5h_min is minutes to local midnight, so the
+  // outer arc draws the same way in both modes.
+  bool credits() const { return flags & FLAG_CREDITS; }
+  bool noBaseline() const { return flags & FLAG_NO_BASELINE; }
   bool noUsage() const { return flags & FLAG_NO_USAGE; }
   bool stale() const { return flags & FLAG_STALE; }
   bool warning() const { return flags & FLAG_LIMIT_WARN; }
@@ -81,9 +104,12 @@ inline bool decode(const uint8_t* data, size_t len, StateFrame& out) {
 
   Header header;
   std::memcpy(&header, data, sizeof(Header));
-  if (header.magic != MAGIC || header.version != VERSION) return false;
+  if (header.magic != MAGIC) return false;
+  if (header.version != VERSION && header.version != VERSION_CREDITS) return false;
   if (header.count > MAX_SESSIONS) return false;
-  if (len < sizeof(Header) + sizeof(SessionRecord) * header.count) return false;
+
+  const size_t ext = header.version == VERSION_CREDITS ? sizeof(CreditsExt) : 0;
+  if (len < sizeof(Header) + ext + sizeof(SessionRecord) * header.count) return false;
 
   out.flags = header.flags;
   out.count = header.count;
@@ -91,8 +117,20 @@ inline bool decode(const uint8_t* data, size_t len, StateFrame& out) {
   out.pct_7d_x10 = header.pct_7d_x10;
   out.resets_5h_min = header.resets_5h_min;
   out.resets_7d_min = header.resets_7d_min;
+  out.today_cents = 0;
+  out.month_cents = 0;
 
   const uint8_t* cursor = data + sizeof(Header);
+  if (ext) {
+    CreditsExt credits;
+    std::memcpy(&credits, cursor, sizeof(CreditsExt));
+    cursor += sizeof(CreditsExt);
+    out.today_cents = credits.today_cents;
+    out.month_cents = credits.month_cents;
+  }
+  // A v1 frame never sets these, but a v2-only flag on a v1 frame would leave
+  // the display drawing dollars it was never sent.
+  if (!ext) out.flags &= ~(FLAG_CREDITS | FLAG_NO_BASELINE);
   for (uint8_t i = 0; i < header.count; ++i) {
     SessionRecord record;
     std::memcpy(&record, cursor, sizeof(SessionRecord));

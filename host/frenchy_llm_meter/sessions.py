@@ -28,7 +28,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-DEFAULT_DIR = Path.home() / ".claude" / "sessions"
+from .paths import claude_dir
+
 
 STATUS_BUSY = "busy"
 STATUS_IDLE = "idle"
@@ -148,4 +149,4 @@ def available(directory: Path | None = None) -> bool:
 
 def resolve_dir() -> Path:
     override = os.environ.get("FRENCHY_SESSIONS_DIR")
-    return Path(override).expanduser() if override else DEFAULT_DIR
+    return Path(override).expanduser() if override else claude_dir() / "sessions"

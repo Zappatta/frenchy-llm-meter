@@ -1,7 +1,7 @@
 // frenchy-llm-meter — Claude Code plan usage on a 1.28" round TFT, inside a crab.
 //
 // The Mac reads its own transcripts, works out plan utilisation, and writes a
-// 108-byte frame over BLE every few seconds. This end draws it and lights the
+// frame of at most 116 bytes over BLE every few seconds. This end draws it and lights the
 // status LED. All the judgement lives on the host; the firmware is a display.
 
 #include <Arduino.h>
@@ -32,6 +32,7 @@ uint32_t lastLed = 0;
 uint32_t lastScreen = 0;
 bool wasLinkUp = false;
 bool wasDancing = false;
+bool wasCredits = false;
 
 }  // namespace
 
@@ -58,7 +59,12 @@ void loop() {
   // Fold every new figure into the burn history before anything draws, so the
   // hub's trace and the arc above it are describing the same payload.
   if (freshPayload) {
-    burn::sample(now, ble_link::frame().pct_5h_x10);
+    const proto::StateFrame& f = ble_link::frame();
+    if (f.credits() != wasCredits) {
+      burn::reset();
+      wasCredits = f.credits();
+    }
+    burn::sample(now, f.credits() ? f.today_cents : f.pct_5h_x10);
   }
 
   if (now - lastLed >= LED_INTERVAL_MS) {

@@ -22,6 +22,15 @@ Earlier revisions estimated the ceiling by treating the largest window ever
 observed as the limit. That is gone: on a fresh install the first sample
 becomes the peak, so the gauge pinned at 100% and the warning LED stuck on red
 permanently. It is not worth reviving now that the real number is free.
+
+Credits mode
+------------
+
+An account on usage credits has no 5-hour or 7-day window, so ``usage.py``
+never sees rate limits for it. In ``MODE_CREDITS`` the plan arc becomes a
+spend gauge instead, fed by ``cost.py``: today's dollars against a normal day
+(or against ``--daily-budget`` while the history is too short to say what
+normal is). The rings are identical in both modes.
 """
 
 from __future__ import annotations
@@ -30,8 +39,11 @@ from datetime import datetime, timezone
 
 from . import sessions as sessions_source
 from . import usage as usage_source
+from .cost import BUDGET_UNTIL_DAYS, CostTracker, minutes_to_midnight
 from .protocol import (
+    FLAG_CREDITS,
     FLAG_LIMIT_WARN,
+    FLAG_NO_BASELINE,
     FLAG_NO_USAGE,
     FLAG_STALE,
     MAX_SESSIONS,
@@ -43,6 +55,15 @@ from .transcripts import WINDOW_5H, Session, SessionState
 
 # Fraction of a window at which the LED turns red.
 WARN_AT = 85.0
+
+MODE_PLAN = "plan"
+MODE_CREDITS = "credits"
+MODES = (MODE_PLAN, MODE_CREDITS)
+
+# Credits mode, against the self-calibrating baseline: half as much again as a
+# normal day is a heavy one. Not 100% — by evening every ordinary day reaches
+# that, and a warning that fires daily is not a warning.
+CREDITS_WARN_RATIO = 1.5
 
 
 def _state_for(
@@ -74,8 +95,19 @@ def _label_for(session: Session, live: LiveSession | None) -> str:
 
 
 class PlanMeter:
-    def __init__(self) -> None:
-        self._warned_missing = False
+    def __init__(
+        self,
+        mode: str = MODE_PLAN,
+        cost: CostTracker | None = None,
+        daily_budget: float | None = None,
+    ) -> None:
+        if mode not in MODES:
+            raise ValueError(f"unknown mode {mode!r}")
+        if mode == MODE_CREDITS and cost is None:
+            raise ValueError("credits mode needs a CostTracker")
+        self.mode = mode
+        self.cost = cost
+        self.daily_budget = daily_budget if daily_budget and daily_budget > 0 else None
 
     def snapshot(
         self, sessions: list[Session], now: datetime | None = None
@@ -85,6 +117,10 @@ class PlanMeter:
         reading = usage_source.read()
         live = sessions_source.read()
         frame = StateFrame(sessions=self._rings(sessions, now, reading, live))
+
+        if self.mode == MODE_CREDITS:
+            self._credits(frame, now)
+            return frame
 
         if reading is None:
             # No capture yet: the shim is not installed, or no Claude Code
@@ -111,6 +147,37 @@ class PlanMeter:
             frame.flags |= FLAG_LIMIT_WARN
 
         return frame
+
+    def _credits(self, frame: StateFrame, now: datetime) -> None:
+        """Fill the header with spend instead of plan windows.
+
+        Nothing here depends on the statusline capture, so neither STALE nor
+        NO_USAGE applies: the transcripts are read live, and a credits account
+        has no rate limits for the capture to be missing.
+        """
+        assert self.cost is not None
+        spend = self.cost.spend(now)
+        frame.flags |= FLAG_CREDITS
+        frame.today_cents = round(spend.today * 100)
+        frame.month_cents = round(spend.month * 100)
+        frame.resets_5h_min = min(minutes_to_midnight(now), 0xFFFF)
+
+        ratio = spend.ratio_to_baseline()
+        use_budget = self.daily_budget is not None and (
+            ratio is None or spend.baseline_days < BUDGET_UNTIL_DAYS
+        )
+        if use_budget:
+            pct = 100.0 * spend.today / self.daily_budget
+            frame.pct_5h_x10 = round(pct * 10)
+            if pct >= WARN_AT:
+                frame.flags |= FLAG_LIMIT_WARN
+        elif ratio is not None:
+            frame.pct_5h_x10 = round(ratio * 1000)
+            if ratio >= CREDITS_WARN_RATIO:
+                frame.flags |= FLAG_LIMIT_WARN
+        else:
+            # Days one and two: dollars, but nothing yet to scale them against.
+            frame.flags |= FLAG_NO_BASELINE
 
     def _rings(
         self,

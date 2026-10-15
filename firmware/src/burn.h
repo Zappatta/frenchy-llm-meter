@@ -10,23 +10,28 @@
 // ago. This keeps enough history to draw that and nothing more.
 //
 // Built entirely from frames the device already receives, so nothing is added
-// to the wire. Each bucket holds the rise in pct_5h_x10 across its span, which
-// makes a bucket a burn rate rather than a level.
+// to the wire. Each bucket holds the rise in the gauge's level across its span
+// — pct_5h_x10 in plan mode, today_cents in credits mode — which makes a
+// bucket a burn rate rather than a level.
 
 namespace burn {
 
 // Fold a freshly received frame's plan figure into the history. Call once per
 // payload; sampling faster than the bucket span costs nothing.
-void sample(uint32_t nowMs, uint16_t pct5hX10);
+void sample(uint32_t nowMs, uint32_t level);
+
+// Forget everything. For when the level changes units (the host switched
+// between plan and credits mode): a delta across that switch means nothing.
+void reset();
 
 // Oldest first. Buckets never filled read as zero, so a device that booted ten
 // minutes ago draws a short trace rather than a wrong one.
 const uint16_t* buckets();
 
-// Largest bucket in the history, for autoscaling. Never below
-// BURN_SCALE_MIN, so a near-idle hour stays flat instead of amplifying
-// rounding noise into a mountain range.
-uint16_t peak();
+// Largest bucket in the history, for autoscaling. Never below `floor`
+// (BURN_SCALE_MIN, or BURN_SCALE_MIN_CENTS in credits mode), so a near-idle
+// hour stays flat instead of amplifying rounding noise into a mountain range.
+uint16_t peak(uint16_t floor);
 
 // Bumped whenever a bucket closes. The hub only needs repainting that often,
 // so this is what the dirty check keys on rather than a timer of its own.

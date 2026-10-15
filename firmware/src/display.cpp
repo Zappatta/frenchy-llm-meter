@@ -76,6 +76,10 @@ struct Painted {
   uint8_t state[proto::MAX_SESSIONS] = {0xFF, 0xFF, 0xFF, 0xFF};
   uint16_t pct5h = 0xFFFF;
   uint16_t pct7d = 0xFFFF;
+  uint32_t todayCents = 0xFFFFFFFF;
+  // The month footer as drawn, not as sent: the cents climb with every
+  // request, but "mo $340" only changes once a dollar has gone by.
+  char monthText[12] = "";
   uint32_t burnRev = 0xFFFFFFFF;
   uint8_t flags = 0xFF;
   bool linkUp = false;
@@ -134,16 +138,17 @@ void clearRing(uint8_t index) {
 // Autoscaled to the hour's own peak with a floor, so the shape is always
 // legible without the height meaning a fixed quantity. The height is
 // deliberately not a reading — the arc outside is the reading.
-void drawSparkline(const proto::StateFrame& frame) {
+void drawSparkline(const proto::StateFrame& frame, int16_t topOffset,
+                   int16_t height, uint16_t floor) {
   const int16_t x0 = CENTRE_X - SPARK_W / 2;
-  const int16_t top = CENTRE_Y + SPARK_TOP;
-  const int16_t base = top + SPARK_H;
+  const int16_t top = CENTRE_Y + topOffset;
+  const int16_t base = top + height;
 
   // Baseline always drawn, so an hour with nothing in it still reads as "there
   // is a trace here and it is flat" rather than as a failed redraw.
   tft.drawFastHLine(x0, base, SPARK_W, COL_TRACK);
 
-  const uint16_t scale = burn::peak();
+  const uint16_t scale = burn::peak(floor);
   const uint16_t* b = burn::buckets();
   const uint32_t colour = frame.warning() ? COL_ALERT
                         : frame.stale()   ? COL_IDLE
@@ -151,21 +156,28 @@ void drawSparkline(const proto::StateFrame& frame) {
 
   for (uint8_t i = 0; i < BURN_BUCKETS; ++i) {
     if (b[i] == 0) continue;
-    int16_t h = static_cast<int16_t>(static_cast<uint32_t>(b[i]) * SPARK_H / scale);
+    int16_t h = static_cast<int16_t>(static_cast<uint32_t>(b[i]) * height / scale);
     if (h < 1) h = 1;  // a bucket that saw anything at all must be visible
-    if (h > SPARK_H) h = SPARK_H;
+    if (h > height) h = height;
     tft.fillRect(x0 + i * SPARK_COL_W, base - h, SPARK_COL_W, h, colour);
   }
 }
 
 // The 5-hour plan window, as the outermost band. Unlike a session ring this
 // one fills as it is consumed, so a full circle means the window is spent.
+//
+// In credits mode it is today's spend against a normal day instead, drawn by
+// exactly the same code: a full circle is "already a typical day's worth",
+// red is the host's call (half as much again, or past a fixed budget), and an
+// empty track is the first few days, before there is a normal to compare to.
 void drawPlanArc(const proto::StateFrame& frame, bool haveFrame) {
   tft.fillArc(CENTRE_X, CENTRE_Y, PLAN_INNER, PLAN_OUTER, 0.0f, 360.0f, COL_TRACK);
 
   // An empty track still says "there is a plan gauge here and it has no
   // reading", which is the honest answer without the statusline hook.
-  if (!haveFrame || frame.noUsage() || frame.pct_5h_x10 == 0) return;
+  if (!haveFrame || frame.noUsage() || frame.noBaseline() || frame.pct_5h_x10 == 0) {
+    return;
+  }
 
   // Clamped, because the host deliberately sends over-100% figures so an
   // over-limit state is visible. An unclamped sweep past 360 degrees is drawn
@@ -185,6 +197,63 @@ void drawLinkDot(bool linkUp) {
                  linkUp ? COL_LINK_OK : COL_ALERT);
 }
 
+// Dollars in as few glyphs as stay honest: cents while they still matter,
+// whole dollars once they don't, thousands once the figure would outgrow the
+// space it has. Every result fits the narrowest place it is drawn.
+void formatUsd(char* out, size_t size, uint32_t cents) {
+  const uint32_t dollars = cents / 100;
+  if (dollars < 100) {
+    std::snprintf(out, size, "$%u.%02u", static_cast<unsigned>(dollars),
+                  static_cast<unsigned>(cents % 100));
+  } else if (dollars < 10000) {
+    std::snprintf(out, size, "$%u", static_cast<unsigned>((cents + 50) / 100));
+  } else if (dollars < 100000) {
+    std::snprintf(out, size, "$%u.%uk", static_cast<unsigned>(dollars / 1000),
+                  static_cast<unsigned>((dollars % 1000) / 100));
+  } else {
+    std::snprintf(out, size, "$%uk", static_cast<unsigned>(dollars / 1000));
+  }
+}
+
+// Credits mode. Today's dollars are the reading, so they take the headline;
+// the arc outside says how that compares with a normal day. The month sits
+// where the 7-day figure sits in plan mode — the slow-moving companion line.
+//
+// Shown with or without live sessions: unlike a plan window, money already
+// spent today is still true when every terminal is closed.
+// The figure on its own. It moves with every request while a session works,
+// far more often than anything else in the hub, so it is the one thing that
+// redraws without the hub being wiped around it — a full repaint every few
+// seconds is a visible flicker on a desk.
+void drawCreditsToday(const proto::StateFrame& frame) {
+  char today[12];
+  formatUsd(today, sizeof(today), frame.today_cents);
+  tft.setTextDatum(middle_center);
+  tft.setFont(&fonts::FreeSansBold12pt7b);
+  tft.setTextColor(frame.warning() ? COL_ALERT : COL_TEXT, COL_BG);
+  tft.setTextPadding(CREDITS_TODAY_PAD);
+  tft.drawString(today, CENTRE_X, CENTRE_Y + CREDITS_TODAY_Y);
+  tft.setTextPadding(0);
+  tft.setFont(&fonts::Font0);
+}
+
+void drawCreditsHub(const proto::StateFrame& frame) {
+  drawCreditsToday(frame);
+  tft.setTextDatum(middle_center);
+
+  drawSparkline(frame, CREDITS_SPARK_TOP, CREDITS_SPARK_H, BURN_SCALE_MIN_CENTS);
+
+  // Same width budget as the plan footer below: "mo $1.2k" is the widest
+  // case and measures about the same as "7d 100%".
+  char month[12];
+  char footer[16];
+  formatUsd(month, sizeof(month), frame.month_cents);
+  std::snprintf(footer, sizeof(footer), "mo %s", month);
+  tft.setFont(&fonts::FreeSans9pt7b);
+  tft.setTextColor(COL_MUTED, COL_BG);
+  tft.drawString(footer, CENTRE_X, CENTRE_Y + 40);
+}
+
 void drawHubBody(const proto::StateFrame& frame, bool haveFrame) {
   // Never fed. Nothing stale to fall back on, so say so outright.
   if (!haveFrame) {
@@ -192,6 +261,11 @@ void drawHubBody(const proto::StateFrame& frame, bool haveFrame) {
     tft.setTextColor(COL_ALERT);
     tft.drawString("NO", CENTRE_X, CENTRE_Y - 16);
     tft.drawString("LINK", CENTRE_X, CENTRE_Y + 16);
+    return;
+  }
+
+  if (frame.credits()) {
+    drawCreditsHub(frame);
     return;
   }
 
@@ -203,7 +277,7 @@ void drawHubBody(const proto::StateFrame& frame, bool haveFrame) {
     return;
   }
 
-  drawSparkline(frame);
+  drawSparkline(frame, SPARK_TOP, SPARK_H, BURN_SCALE_MIN);
 
   // The 7-day window is the slow-moving one, so it keeps a compact line rather
   // than a band of its own. The 5-hour figure is the outer arc.
@@ -252,12 +326,20 @@ bool planChanged(const proto::StateFrame& frame, bool haveFrame) {
          painted.flags != frame.flags || painted.haveFrame != haveFrame;
 }
 
+bool monthTextChanged(const proto::StateFrame& frame) {
+  if (!frame.credits()) return false;
+  char month[12];
+  formatUsd(month, sizeof(month), frame.month_cents);
+  return std::strcmp(month, painted.monthText) != 0;
+}
+
 bool hubChanged(const proto::StateFrame& frame, bool linkUp, bool haveFrame) {
   // Deliberately not the 5h percentage or its countdown: those live on the
   // outer arc now, and keying the hub to a value that ticks every minute would
   // repaint the centre number for no reason.
   return !painted.valid || painted.burnRev != burn::revision() ||
          painted.pct7d != frame.pct_7d_x10 || painted.flags != frame.flags ||
+         monthTextChanged(frame) ||
          painted.linkUp != linkUp || painted.haveFrame != haveFrame ||
          painted.count != frame.count;
 }
@@ -359,6 +441,8 @@ void render(const proto::StateFrame& frame, bool linkUp, bool haveFrame) {
 
   if (hubChanged(frame, linkUp, haveFrame)) {
     drawHub(frame, linkUp, haveFrame);
+  } else if (haveFrame && frame.credits() && painted.todayCents != frame.today_cents) {
+    drawCreditsToday(frame);
   }
 
   painted.burnRev = burn::revision();
@@ -369,6 +453,8 @@ void render(const proto::StateFrame& frame, bool linkUp, bool haveFrame) {
   }
   painted.pct5h = frame.pct_5h_x10;
   painted.pct7d = frame.pct_7d_x10;
+  painted.todayCents = frame.today_cents;
+  formatUsd(painted.monthText, sizeof(painted.monthText), frame.month_cents);
   painted.flags = frame.flags;
   painted.linkUp = linkUp;
   painted.haveFrame = haveFrame;

@@ -5,6 +5,20 @@
     python3 install.py --doctor     diagnose a meter that is not updating
     python3 install.py --uninstall  put everything back
 
+    python3 install.py --profile ~/.claude --mode credits --daily-budget 40
+                                    pick the profile and mode without asking
+
+Two choices are made up front, and remembered for the next run:
+
+**Which Claude Code profile.** Claude Code keeps its state in one config dir,
+``~/.claude`` unless ``CLAUDE_CONFIG_DIR`` says otherwise. Anyone running two
+accounts has two of them; the meter watches one.
+
+**Which mode.** ``plan`` is a Claude.ai Pro/Max account: the outer arc is the
+5-hour window and the footer the 7-day one, as Claude Code reports them.
+``credits`` is an account billed per use, which has no windows at all: the
+arc becomes today's spend against a normal day, and the hub shows the dollars.
+
 The install comes in two halves, because they cost the user different amounts.
 
 The core half needs no configuration at all. Session liveness, status and
@@ -43,9 +57,14 @@ VENV = HOST / ".venv"
 VENV_PY = VENV / "bin" / "python"
 SHIM = HOST / "statusline-hook.sh"
 
-CLAUDE_DIR = Path.home() / ".claude"
+# Rebound by use_profile() once the profile is known. Module-level so the rest
+# of the installer, and the tests, can keep treating them as plain paths.
+DEFAULT_CLAUDE_DIR = Path.home() / ".claude"
+CLAUDE_DIR = DEFAULT_CLAUDE_DIR
 SETTINGS = CLAUDE_DIR / "settings.json"
 SESSIONS_DIR = CLAUDE_DIR / "sessions"
+
+MODES = ("plan", "credits")
 
 LABEL = "io.frenchyllmmeter.daemon"
 PLIST = Path.home() / "Library" / "LaunchAgents" / f"{LABEL}.plist"
@@ -57,6 +76,9 @@ LOG = Path.home() / "Library" / "Logs" / "frenchy-llm-meter.log"
 STATE_DIR = Path.home() / ".local" / "state" / "frenchy-llm-meter"
 USAGE_FILE = STATE_DIR / "usage.json"
 RECEIPT = STATE_DIR / "install.json"
+# Profile, mode and budget, so --doctor, --uninstall and the next install all
+# act on the same profile the service is watching.
+CONFIG = STATE_DIR / "config.json"
 
 MIN_PYTHON = (3, 11)
 POLL_INTERVAL = "5"
@@ -168,6 +190,161 @@ def wrapped_inner(command: str) -> str | None:
     return None
 
 
+def use_profile(directory: Path) -> None:
+    global CLAUDE_DIR, SETTINGS, SESSIONS_DIR
+    CLAUDE_DIR = directory
+    SETTINGS = directory / "settings.json"
+    SESSIONS_DIR = directory / "sessions"
+
+
+def load_config() -> dict:
+    data = read_json(CONFIG)
+    return data if isinstance(data, dict) else {}
+
+
+def use_saved_profile() -> dict:
+    """Point at whatever profile the last install chose, for doctor/uninstall."""
+    config = load_config()
+    if isinstance(config.get("claude_dir"), str):
+        use_profile(Path(config["claude_dir"]))
+    return config
+
+
+def profile_slug(directory: Path) -> str:
+    """Mirror of frenchy_llm_meter.paths.profile_slug; this file is stdlib-only."""
+    name = directory.name.lstrip(".")
+    return "".join(c if c.isalnum() or c in "-_" else "_" for c in name) or "claude"
+
+
+def discover_profiles() -> list[Path]:
+    """Every Claude Code config dir that looks used, default first.
+
+    ``~/.claude`` plus any ``~/.claude-*`` sibling with transcripts or
+    settings in it — the usual spelling for a second CLAUDE_CONFIG_DIR — and
+    CLAUDE_CONFIG_DIR itself wherever it points.
+    """
+    found: list[Path] = []
+
+    def consider(path: Path) -> None:
+        path = path.expanduser()
+        if path in found or not path.is_dir():
+            return
+        if (path / "projects").is_dir() or (path / "settings.json").exists():
+            found.append(path)
+
+    consider(DEFAULT_CLAUDE_DIR)
+    for sibling in sorted(Path.home().glob(".claude-*")):
+        consider(sibling)
+    if os.environ.get("CLAUDE_CONFIG_DIR"):
+        consider(Path(os.environ["CLAUDE_CONFIG_DIR"]))
+    return found
+
+
+def choose(question: str, options: list[str], default: int) -> int:
+    """Numbered pick from a list. Non-interactive runs take the default."""
+    if not sys.stdin.isatty():
+        return default
+    print(f"  {question}")
+    for i, option in enumerate(options):
+        marker = "*" if i == default else " "
+        print(f"   {marker} {i + 1}) {option}")
+    while True:
+        try:
+            answer = input(f"  choice [{default + 1}]: ").strip()
+        except EOFError:
+            return default
+        if not answer:
+            return default
+        if answer.isdigit() and 1 <= int(answer) <= len(options):
+            return int(answer) - 1
+        print(f"    pick 1-{len(options)}")
+
+
+def choose_profile(requested: str | None, saved: dict) -> Path:
+    step("Which Claude Code profile")
+    if requested:
+        path = Path(requested).expanduser()
+        ok(f"{path} (from --profile)")
+        return path
+
+    profiles = discover_profiles()
+    saved_dir = Path(saved["claude_dir"]) if isinstance(saved.get("claude_dir"), str) else None
+    if saved_dir and saved_dir not in profiles:
+        profiles.insert(0, saved_dir)
+    if not profiles:
+        return DEFAULT_CLAUDE_DIR
+    if len(profiles) == 1:
+        ok(f"{profiles[0]} (the only one on this machine)")
+        return profiles[0]
+
+    default = profiles.index(saved_dir) if saved_dir in profiles else 0
+    labels = [
+        f"{p}" + ("  (default)" if p == DEFAULT_CLAUDE_DIR else "")
+        for p in profiles
+    ]
+    picked = profiles[choose("The meter watches one profile. Which?", labels, default)]
+    ok(str(picked))
+    return picked
+
+
+def choose_mode(requested: str | None, saved: dict) -> str:
+    step("Which kind of account")
+    if requested:
+        ok(f"{requested} (from --mode)")
+        return requested
+    default = MODES.index(saved["mode"]) if saved.get("mode") in MODES else 0
+    picked = MODES[choose(
+        "How is this profile billed?",
+        [
+            "plan     Claude.ai Pro/Max — show the 5h and 7d limits",
+            "credits  billed per use — show dollars spent today",
+        ],
+        default,
+    )]
+    ok(picked)
+    return picked
+
+
+def choose_budget(requested: float | None, saved: dict, mode: str) -> float | None:
+    if mode != "credits":
+        return None
+    if requested is not None:
+        return requested if requested > 0 else None
+    previous = saved.get("daily_budget")
+    previous = previous if isinstance(previous, (int, float)) and previous > 0 else None
+    print()
+    print("    The gauge compares today with your average day over the last two")
+    print("    weeks, so it needs no budget. Until there are a few days of history")
+    print("    a fixed daily figure can scale it instead. Optional.")
+    if not sys.stdin.isatty():
+        return previous
+    hint = f"{previous:g}" if previous else "none"
+    while True:
+        try:
+            answer = input(f"  daily budget in $ [{hint}]: ").strip().lstrip("$")
+        except EOFError:
+            return previous
+        if not answer:
+            return previous
+        if answer.lower() in ("none", "0", "-"):
+            return None
+        try:
+            value = float(answer)
+        except ValueError:
+            print("    a number, or blank")
+            continue
+        return value if value > 0 else None
+
+
+def daemon_args(config: dict) -> list[str]:
+    """What the service is started with. Everything it needs, nothing inherited:
+    a launchd job sees none of the shell's environment."""
+    args = ["--claude-dir", config["claude_dir"], "--mode", config["mode"]]
+    if config.get("daily_budget"):
+        args += ["--daily-budget", f"{config['daily_budget']:g}"]
+    return args
+
+
 def ask(question: str, default: bool) -> bool:
     if not sys.stdin.isatty():
         return default
@@ -242,7 +419,7 @@ def build_venv(dry: bool) -> None:
     ok("frenchy-llm-meter and its dependencies installed")
 
 
-def first_run(dry: bool) -> None:
+def first_run(dry: bool, config: dict) -> None:
     """Run the daemon in the foreground once, before launchd ever touches it.
 
     Two jobs. It proves the pipeline end to end while the user is watching, and
@@ -274,7 +451,8 @@ def first_run(dry: bool) -> None:
     print("    meter can never be reached.\n")
 
     proc = subprocess.Popen(
-        [str(VENV_PY), "-m", "frenchy_llm_meter", "--interval", "3"],
+        [str(VENV_PY), "-m", "frenchy_llm_meter", "--interval", "3",
+         *daemon_args(config)],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
@@ -310,13 +488,14 @@ def first_run(dry: bool) -> None:
         note("the daemon keeps scanning, so this fixes itself when it appears")
 
 
-def install_agent(dry: bool) -> None:
+def install_agent(dry: bool, config: dict) -> None:
     step("Installing the background service")
 
     plist = {
         "Label": LABEL,
         "ProgramArguments": [
-            str(VENV_PY), "-m", "frenchy_llm_meter", "--interval", POLL_INTERVAL
+            str(VENV_PY), "-m", "frenchy_llm_meter", "--interval", POLL_INTERVAL,
+            *daemon_args(config),
         ],
         "WorkingDirectory": str(HOST),
         "RunAtLoad": True,
@@ -363,8 +542,14 @@ def statusline_state() -> tuple[object | None, str | None]:
     return block, command if isinstance(command, str) else None
 
 
-def offer_usage(dry: bool, decision: bool | None) -> None:
-    step("Optional: 5h and 7d plan usage")
+def offer_usage(dry: bool, decision: bool | None, mode: str = "plan") -> None:
+    if mode == "credits":
+        # Spend comes from the transcripts, so the wrapper is worth less here:
+        # it only sharpens each ring's context figure from an estimate to the
+        # number Claude Code itself shows.
+        step("Optional: exact context figures for the rings")
+    else:
+        step("Optional: 5h and 7d plan usage")
 
     block, current = statusline_state()
 
@@ -380,10 +565,17 @@ def offer_usage(dry: bool, decision: bool | None) -> None:
     if relocating:
         warn("found a wrapper from another checkout; re-pointing it here")
 
-    print("    Claude Code only exposes plan percentages to its statusline")
-    print("    command, so capturing them means pointing statusLine.command at")
-    print("    a wrapper. Your existing statusline still runs, untouched, and")
-    print("    its output is what you keep seeing.")
+    if mode == "credits":
+        print("    Spend needs nothing extra. The rings estimate each session's")
+        print("    context from its transcript; the exact figure only reaches the")
+        print("    statusline command, so capturing it means pointing")
+        print(f"    statusLine.command in {SETTINGS} at a wrapper.")
+    else:
+        print("    Claude Code only exposes plan percentages to its statusline")
+        print("    command, so capturing them means pointing statusLine.command at")
+        print(f"    a wrapper, in {SETTINGS}.")
+    print("    Your existing statusline still runs, untouched, and its output is")
+    print("    what you keep seeing.")
     print()
     if inner:
         note(f"your statusline: {inner}")
@@ -487,6 +679,14 @@ def doctor() -> int:
     step("frenchy-llm-meter doctor")
     problems = 0
 
+    config = use_saved_profile()
+    mode = config.get("mode", "plan")
+    ok(f"watching {CLAUDE_DIR} in {mode} mode")
+    if not CLAUDE_DIR.is_dir():
+        bad(f"{CLAUDE_DIR} does not exist")
+        note("re-run `python3 install.py` and pick the profile again")
+        problems += 1
+
     # 1. sessions registry — the zero-config core
     live = list(SESSIONS_DIR.glob("*.json")) if SESSIONS_DIR.is_dir() else []
     if live:
@@ -526,7 +726,23 @@ def doctor() -> int:
         note("run `python3 install.py` to install it")
         problems += 1
 
-    # 3. plan usage (optional)
+    # 3. credits: the spend ledger
+    if mode == "credits":
+        ledger = STATE_DIR / f"cost-{profile_slug(CLAUDE_DIR)}.json"
+        days = read_json(ledger)
+        days = days.get("days") if isinstance(days, dict) else None
+        if isinstance(days, dict) and days:
+            today = datetime.now().date().isoformat()
+            spent = days.get(today, 0.0)
+            ok(f"spend ledger: {len(days)} day(s) recorded, ${spent:.2f} today so far")
+            if len(days) < 3:
+                note("the gauge stays empty until three days with spend exist;")
+                note("the dollar figure shows from the start")
+        else:
+            warn(f"no spend recorded yet at {ledger}")
+            note("written within a minute of the service reading any transcript")
+
+    # 4. plan usage / exact context (optional)
     _, current = statusline_state()
     if is_our_shim(current):
         ok("statusline wrapper installed")
@@ -537,11 +753,14 @@ def doctor() -> int:
     elif current:
         warn("a statusline is configured but it is not ours")
         note("run `python3 install.py --with-usage` to wrap it")
+    elif mode == "credits":
+        note("no statusline wrapper: ring context figures are estimates")
+        note("optional — run `python3 install.py --with-usage` for exact ones")
     else:
         warn("no statusline wrapper: plan percentages are off")
         note("optional — run `python3 install.py --with-usage` to enable")
 
-    # 4. the capture itself
+    # 5. the capture itself
     if USAGE_FILE.exists():
         age = int(time.time() - USAGE_FILE.stat().st_mtime)
         captured = read_json(USAGE_FILE)
@@ -554,15 +773,21 @@ def doctor() -> int:
             pct = limits["five_hour"].get("used_percentage")
             shown = f"{pct:.1f}" if isinstance(pct, (int, float)) else pct
             ok(f"plan usage present: 5h at {shown}%")
+            if mode == "credits":
+                warn("this account reports plan limits, so it is on a plan")
+                note("`python3 install.py --mode plan` shows them instead of spend")
+        elif mode == "credits":
+            pass  # expected: credits accounts have no rate limits
         else:
             warn("capture has no rate_limits")
             note("these only exist for Claude.ai Pro/Max accounts, and only")
             note("after the first API response in a session")
+            note("billed per use instead? `python3 install.py --mode credits`")
     elif is_our_shim(current):
         bad(f"wrapper installed but nothing written to {USAGE_FILE}")
         problems += 1
 
-    # 5. the shim path still resolving
+    # 6. the shim path still resolving
     if is_some_shim(current) and not is_our_shim(current):
         bad("your statusline points at a different frenchy-llm-meter checkout")
         note("the repo was moved or renamed; re-run `python3 install.py --with-usage`")
@@ -592,6 +817,7 @@ def doctor() -> int:
 
 def uninstall(dry: bool) -> int:
     step("Removing frenchy-llm-meter")
+    use_saved_profile()
 
     uid = os.getuid()
     if not dry:
@@ -628,6 +854,15 @@ def main(argv: list[str] | None = None) -> int:
                        help="wire up plan percentages without asking")
     usage.add_argument("--no-usage", action="store_true",
                        help="skip plan percentages without asking")
+    parser.add_argument("--profile", metavar="DIR",
+                        help="Claude Code config dir to watch (default: ask, "
+                             "or the one chosen last time)")
+    parser.add_argument("--mode", choices=MODES,
+                        help="plan: Pro/Max 5h/7d limits. credits: dollars "
+                             "spent today, for per-use billing")
+    parser.add_argument("--daily-budget", type=float, metavar="USD",
+                        help="credits mode: scale the gauge to this until two "
+                             "weeks of history can (0 for none)")
     args = parser.parse_args(argv)
 
     if args.doctor:
@@ -637,15 +872,37 @@ def main(argv: list[str] | None = None) -> int:
 
     decision = True if args.with_usage else False if args.no_usage else None
 
+    saved = load_config()
+    profile = choose_profile(args.profile, saved)
+    mode = choose_mode(args.mode, saved)
+    budget = choose_budget(args.daily_budget, saved, mode)
+
+    # Moving to a different profile: the old one's statusline wrapper would
+    # otherwise keep capturing into the same state file as the new one's.
+    previous = saved.get("claude_dir")
+    if isinstance(previous, str) and Path(previous) != profile:
+        use_profile(Path(previous))
+        if is_some_shim(statusline_state()[1]):
+            step(f"Unwrapping the statusline in the old profile, {previous}")
+            remove_usage(args.dry_run)
+    use_profile(profile)
+
+    config = {"claude_dir": str(profile), "mode": mode, "daily_budget": budget}
+
     preflight()
     build_venv(args.dry_run)
 
     # The optional half is settled before launchd starts, so the first thing
     # the service does is already the finished configuration.
-    offer_usage(args.dry_run, decision)
+    offer_usage(args.dry_run, decision, mode)
 
-    first_run(args.dry_run)
-    install_agent(args.dry_run)
+    if args.dry_run:
+        note(f"would record {config} in {CONFIG}")
+    else:
+        write_json(CONFIG, config)
+
+    first_run(args.dry_run, config)
+    install_agent(args.dry_run, config)
 
     step("Done")
     note("check on it any time with: python3 install.py --doctor")

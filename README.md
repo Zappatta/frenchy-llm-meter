@@ -3,9 +3,10 @@
 Claude Code plan usage on a 1.28" round display, mounted in a 3D-printed Clawd.
 
 A daemon on the Mac reads its own Claude Code state, works out how much of the
-plan's 5-hour and 7-day windows have been consumed and how full each session's
-context window is, then pushes a 108-byte frame to an ESP32-S3 over Bluetooth LE
-every few seconds. The crab draws it. All the judgement lives on the host; the
+plan's 5-hour and 7-day windows have been consumed — or, for an account billed
+per use, how many dollars today has cost — and how full each session's context
+window is, then pushes a frame of at most 116 bytes to an ESP32-S3 over
+Bluetooth LE every few seconds. The crab draws it. All the judgement lives on the host; the
 firmware is a display.
 
 BLE rather than WiFi so it works on any network — home, office, tethered — with
@@ -99,6 +100,10 @@ pio run -t upload      # build and flash over USB-C
 pio device monitor     # 115200, to watch it boot
 ```
 
+There is no plan/credits choice to make here. One firmware draws both, and
+the Mac tells it which on every frame, so the mode is picked when you install
+on the Mac and can change later without reflashing.
+
 On first boot you should see `NO LINK` in red with a red dot — the device has
 never been fed. That is correct; the Mac side comes next.
 
@@ -113,7 +118,14 @@ systemd user unit and someone with the hardware would settle it.
 python3 install.py
 ```
 
-That builds the virtualenv, runs the daemon once in the foreground, then
+It asks two things first, and remembers both for next time:
+
+- **Which Claude Code profile** to watch, if there is more than one —
+  `~/.claude`, plus any `~/.claude-*` you point `CLAUDE_CONFIG_DIR` at.
+- **How that profile is billed**: `plan` (Pro/Max, 5h/7d limits) or
+  `credits` (per use, dollars). See [Credits mode](#7-credits-mode) below.
+
+Then it builds the virtualenv, runs the daemon once in the foreground, and
 installs and starts the login service. The foreground run is deliberate: it is
 where macOS raises its **Bluetooth permission prompt**, and a launchd job has no
 window to prompt from. Say yes, or the meter can never be reached.
@@ -124,6 +136,7 @@ Within a few seconds the crab should show rings and a green dot.
 python3 install.py --doctor      # why isn't it updating?
 python3 install.py --uninstall   # stop the service, restore your statusline
 python3 install.py --dry-run     # print what would change, touch nothing
+python3 install.py --profile ~/.claude --mode credits   # no questions asked
 
 # if doctor is clean but the link still is not:
 host/.venv/bin/python -m frenchy_llm_meter --probe   # where does the connect die?
@@ -150,6 +163,51 @@ footer reads `no plan`.
 > Plan percentages only exist for Claude.ai **Pro/Max** accounts, and only after
 > the first API response in a session. On an API-key, Team or Enterprise account
 > they never appear, and that is not a fault in the meter.
+
+## 7. Credits mode
+
+An account on usage credits (a work account, typically) has no 5-hour or
+7-day window, so there are no plan percentages to show. Pick `credits` at
+install, or:
+
+```sh
+python3 install.py --profile ~/.claude --mode credits
+python3 install.py --mode credits --daily-budget 40    # optional, see below
+```
+
+The meter then shows spend instead:
+
+- **Hub** — dollars spent **today**, resetting at local midnight, with
+  **month-to-date** on the footer line (`mo $340`).
+- **Outer arc** — today against **a normal day**: the average day with any
+  spend over the previous two weeks. A full circle means today has already cost
+  a typical day's worth; red means half as much again. Days with no spend are
+  left out, so a quiet weekend does not make Monday look expensive.
+- **For the first few days** there is no normal yet: the dollars show from the
+  start, the arc stays empty until three days with spend exist. A
+  `--daily-budget` scales the arc in the meantime (red at 85% of it), and steps
+  aside once a week of history exists.
+
+No setup beyond the mode. Spend is worked out from the transcripts Claude Code
+already writes: every response's token counts × that model's published
+per-token rates (`host/frenchy_llm_meter/pricing.py`), including cache writes
+and reads, fast mode and web searches. It is therefore **an estimate at list
+price** — the same sum Claude Code's own cost display does — and knows nothing
+of negotiated discounts. Usage on other machines, claude.ai or CI never reaches
+this Mac's transcripts and is not counted.
+
+Claude Code deletes transcripts after 30 days by default, so per-day totals are
+kept in a small ledger at `~/.local/state/frenchy-llm-meter/cost-<profile>.json`
+and history survives the cleanup.
+
+The statusline wrapper is still offered in credits mode, for a smaller reason:
+it turns each ring's context figure from a transcript estimate into the exact
+number Claude Code shows.
+
+The same firmware serves both modes — the host says which it is in on every
+frame — so switching is a re-run of `install.py`, never a reflash. Plan mode
+still sends the original frame format, so a crab flashed before credits mode
+existed keeps working in plan mode untouched.
 
 ## Troubleshooting
 
@@ -222,6 +280,10 @@ outranks whatever the session is doing.
 
 **Hub** — context left, big, for whichever session runs out first, plus the
 7-day figure on a compact line beneath.
+
+**In credits mode** the outer arc is today's spend against a normal day, the
+hub's headline is today's dollars and its footer the month so far. See
+[Credits mode](#7-credits-mode).
 
 **Dot** — green when the host is talking to the device, red when it has gone
 quiet. When it is red the figures on screen are the last ones received, held
@@ -317,6 +379,7 @@ python3 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
 
 .venv/bin/python -m frenchy_llm_meter --dry-run     # print to stdout, no BLE
+.venv/bin/python -m frenchy_llm_meter --dry-run --mode credits --claude-dir ~/.claude
 .venv/bin/python -m frenchy_llm_meter               # connect and push
 .venv/bin/python -m frenchy_llm_meter --probe       # diagnose a failing link
 .venv/bin/python -m pytest tests/ -q
@@ -324,8 +387,10 @@ python3 -m venv .venv
 
 | Variable | Purpose |
 |---|---|
-| `FRENCHY_PROJECTS_DIR` | override `~/.claude/projects` |
-| `FRENCHY_SESSIONS_DIR` | override `~/.claude/sessions` |
+| `FRENCHY_CLAUDE_DIR` | the Claude Code profile to watch (what `--claude-dir` sets) |
+| `FRENCHY_MODE` | `plan` or `credits` (what `--mode` sets) |
+| `FRENCHY_PROJECTS_DIR` | override `<profile>/projects` |
+| `FRENCHY_SESSIONS_DIR` | override `<profile>/sessions` |
 | `FRENCHY_STATE_DIR` | override where the usage capture is written and read |
 | `FRENCHY_INNER_STATUSLINE` | the statusline command the shim wraps |
 
@@ -360,6 +425,9 @@ frenchy-llm-meter/
 │       ├── sessions.py       the live session registry
 │       ├── transcripts.py    parse ~/.claude, dedupe, derive state
 │       ├── usage.py          reads the statusline capture
+│       ├── paths.py          which Claude Code profile is watched
+│       ├── pricing.py        per-model list prices (credits mode)
+│       ├── cost.py           daily spend, baseline, ledger (credits mode)
 │       ├── models.py         per-model context window sizes
 │       ├── plan.py           assembles the frame
 │       ├── protocol.py       frame encoder

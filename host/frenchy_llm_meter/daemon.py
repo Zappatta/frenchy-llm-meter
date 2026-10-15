@@ -5,15 +5,26 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import sys
 from dataclasses import replace
 from datetime import datetime, timezone
+from pathlib import Path
 
 from .ble import DEVICE_NAME, Link
-from .plan import PlanMeter
-from .protocol import FLAG_HOST_ERROR, FLAG_LIMIT_WARN, FLAG_NO_USAGE, FLAG_STALE, StateFrame
+from .cost import CostTracker
+from .paths import claude_dir, profile_slug
+from .plan import MODE_CREDITS, MODE_PLAN, MODES, PlanMeter
+from .protocol import (
+    FLAG_HOST_ERROR,
+    FLAG_LIMIT_WARN,
+    FLAG_NO_BASELINE,
+    FLAG_NO_USAGE,
+    FLAG_STALE,
+    StateFrame,
+)
 from .transcripts import SessionState, TranscriptReader, resolve_root
-from .usage import USAGE_FILE, hook_installed
+from .usage import STATE_DIR, USAGE_FILE, hook_installed
 
 log = logging.getLogger("frenchy_llm_meter")
 
@@ -31,9 +42,26 @@ def _hms(minutes: int) -> str:
     return f"{minutes // 60}h{minutes % 60:02d}m"
 
 
+def _usd(cents: int) -> str:
+    return f"${cents / 100:,.2f}"
+
+
+def _render_credits(frame: StateFrame) -> str:
+    head = f"today {_usd(frame.today_cents)}  month {_usd(frame.month_cents)}"
+    if frame.flags & FLAG_NO_BASELINE:
+        head += "  (no baseline yet)"
+    else:
+        head += f"  gauge {frame.pct_5h_x10 / 10:.0f}%"
+    if frame.flags & FLAG_LIMIT_WARN:
+        head += " WARN"
+    return head + f"  midnight in {_hms(frame.resets_5h_min)}"
+
+
 def render(frame: StateFrame) -> str:
     """One-line summary for logs and --dry-run."""
-    if frame.flags & FLAG_NO_USAGE:
+    if frame.credits:
+        head = _render_credits(frame)
+    elif frame.flags & FLAG_NO_USAGE:
         head = "5h --%  7d --% (statusline shim not installed)"
     else:
         note = ""
@@ -71,13 +99,33 @@ def _error_frame(last_good: StateFrame | None) -> StateFrame:
     )
 
 
-async def run(interval: float, dry_run: bool, device_name: str) -> int:
-    reader = TranscriptReader(resolve_root())
-    meter = PlanMeter()
+def ledger_path() -> Path:
+    """Per profile, so switching profiles never mixes two accounts' spend."""
+    return STATE_DIR / f"cost-{profile_slug()}.json"
+
+
+async def run(
+    interval: float,
+    dry_run: bool,
+    device_name: str,
+    mode: str = MODE_PLAN,
+    daily_budget: float | None = None,
+) -> int:
+    cost = CostTracker(ledger_path()) if mode == MODE_CREDITS else None
+    reader = TranscriptReader(
+        resolve_root(), on_event=cost.add_event if cost is not None else None
+    )
+    meter = PlanMeter(mode, cost, daily_budget)
     link = None if dry_run else Link(device_name)
     last_good: StateFrame | None = None
 
-    if not hook_installed():
+    log.info("watching %s in %s mode", claude_dir(), mode)
+    if mode == MODE_CREDITS:
+        log.info(
+            "spend is estimated at list price from transcripts; ledger at %s",
+            ledger_path(),
+        )
+    elif not hook_installed():
         log.info(
             "plan usage off: no statusline capture at %s. Rings, states and "
             "labels work without it; add the 5h/7d figures with "
@@ -91,6 +139,8 @@ async def run(interval: float, dry_run: bool, device_name: str) -> int:
             try:
                 sessions = reader.poll(now)
                 frame = meter.snapshot(sessions, now)
+                if cost is not None:
+                    cost.flush(now)
                 last_good = frame
             except Exception:  # a bad transcript must not kill the daemon
                 log.exception("failed to read usage")
@@ -106,6 +156,8 @@ async def run(interval: float, dry_run: bool, device_name: str) -> int:
     except asyncio.CancelledError:
         pass
     finally:
+        if cost is not None:
+            cost.flush(datetime.now(timezone.utc), force=True)
         if link is not None:
             await link.close()
     return 0
@@ -124,6 +176,24 @@ def main(argv: list[str] | None = None) -> int:
         help="print state to stdout instead of connecting over BLE",
     )
     parser.add_argument("--device", default=DEVICE_NAME, help="BLE device name")
+    parser.add_argument(
+        "--mode",
+        choices=MODES,
+        default=os.environ.get("FRENCHY_MODE", MODE_PLAN),
+        help="plan: 5h/7d limits of a Pro/Max plan (default). credits: dollars "
+        "spent today, for an account billed per use.",
+    )
+    parser.add_argument(
+        "--claude-dir",
+        help="Claude Code config dir to watch (default: $CLAUDE_CONFIG_DIR, "
+        "else ~/.claude)",
+    )
+    parser.add_argument(
+        "--daily-budget",
+        type=float,
+        help="credits mode: scale the gauge to this many dollars a day until "
+        "a week of history exists to scale it to a normal day instead",
+    )
     parser.add_argument(
         "--probe",
         action="store_true",
@@ -149,6 +219,11 @@ def main(argv: list[str] | None = None) -> int:
         datefmt="%H:%M:%S",
     )
 
+    if args.claude_dir:
+        # Through the environment rather than threaded through every reader:
+        # sessions, transcripts and the profile slug all resolve it the same way.
+        os.environ["FRENCHY_CLAUDE_DIR"] = str(Path(args.claude_dir).expanduser())
+
     try:
         if args.probe:
             from .probe import run as probe_run
@@ -156,7 +231,9 @@ def main(argv: list[str] | None = None) -> int:
             return asyncio.run(
                 probe_run(args.probe_attempts, args.probe_write, 3.0, args.device)
             )
-        return asyncio.run(run(args.interval, args.dry_run, args.device))
+        return asyncio.run(
+            run(args.interval, args.dry_run, args.device, args.mode, args.daily_budget)
+        )
     except KeyboardInterrupt:
         return 0
 

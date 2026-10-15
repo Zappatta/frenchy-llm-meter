@@ -10,7 +10,7 @@ namespace {
 uint16_t g_buckets[BURN_BUCKETS] = {0};
 uint32_t g_accum = 0;       // rise accumulated into the bucket still open
 uint32_t g_bucketStart = 0;
-uint16_t g_lastPct = 0;
+uint32_t g_lastPct = 0;
 bool g_primed = false;      // seen at least one frame, so a delta is meaningful
 uint32_t g_revision = 0;
 
@@ -26,7 +26,14 @@ void closeBucket() {
 
 }  // namespace
 
-void sample(uint32_t nowMs, uint16_t pct5hX10) {
+void reset() {
+  std::memset(g_buckets, 0, sizeof(g_buckets));
+  g_accum = 0;
+  g_primed = false;
+  ++g_revision;
+}
+
+void sample(uint32_t nowMs, uint32_t pct5hX10) {
   if (!g_primed) {
     g_lastPct = pct5hX10;
     g_bucketStart = nowMs;
@@ -34,8 +41,9 @@ void sample(uint32_t nowMs, uint16_t pct5hX10) {
     return;
   }
 
-  // A window rollover drops the figure to near zero. That is the opposite of
-  // spending, so it contributes nothing rather than a large negative.
+  // A window rollover (or midnight, in credits mode) drops the figure to near
+  // zero. That is the opposite of spending, so it contributes nothing rather
+  // than a large negative.
   if (pct5hX10 > g_lastPct) {
     g_accum += pct5hX10 - g_lastPct;
   }
@@ -64,8 +72,8 @@ void sample(uint32_t nowMs, uint16_t pct5hX10) {
 
 const uint16_t* buckets() { return g_buckets; }
 
-uint16_t peak() {
-  uint16_t hi = BURN_SCALE_MIN;
+uint16_t peak(uint16_t floor) {
+  uint16_t hi = floor;
   for (uint8_t i = 0; i < BURN_BUCKETS; ++i) {
     if (g_buckets[i] > hi) hi = g_buckets[i];
   }

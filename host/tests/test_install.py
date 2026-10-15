@@ -92,3 +92,45 @@ def test_unrelated_settings_survive(inst):
     inst.remove_usage(dry=False)
 
     assert _read(inst)["permissions"] == {"allow": ["Bash(ls)"]}
+
+
+# -- profile and mode ----------------------------------------------------------
+
+
+def test_the_service_is_told_everything_it_needs(inst):
+    """launchd passes no environment, so the profile has to be an argument."""
+    args = inst.daemon_args(
+        {"claude_dir": "/Users/x/.claude-work", "mode": "credits", "daily_budget": 40.0}
+    )
+    assert args == ["--claude-dir", "/Users/x/.claude-work", "--mode", "credits",
+                    "--daily-budget", "40"]
+
+
+def test_no_budget_means_no_budget_argument(inst):
+    args = inst.daemon_args({"claude_dir": "/c", "mode": "plan", "daily_budget": None})
+    assert "--daily-budget" not in args
+
+
+def test_profiles_are_found_beside_the_default(inst, tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    (home / ".claude" / "projects").mkdir(parents=True)
+    (home / ".claude-personal" / "projects").mkdir(parents=True)
+    (home / ".claude-empty").mkdir()  # never used: not offered
+    monkeypatch.setattr(inst.Path, "home", lambda: home)
+    monkeypatch.setattr(inst, "DEFAULT_CLAUDE_DIR", home / ".claude")
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+
+    assert inst.discover_profiles() == [home / ".claude", home / ".claude-personal"]
+
+
+def test_switching_profile_repoints_settings(inst, tmp_path):
+    inst.use_profile(tmp_path / ".claude-work")
+    assert inst.SETTINGS == tmp_path / ".claude-work" / "settings.json"
+    assert inst.SESSIONS_DIR == tmp_path / ".claude-work" / "sessions"
+
+
+def test_the_ledger_name_matches_the_daemons(inst):
+    from frenchy_llm_meter.paths import profile_slug
+
+    for name in (".claude", ".claude-personal", "weird dir!"):
+        assert inst.profile_slug(Path(name)) == profile_slug(Path(name))

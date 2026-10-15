@@ -66,7 +66,7 @@ void begin() {
   NimBLEDevice::init(DEVICE_NAME);
 
   // The default 23-byte MTU leaves 20 usable bytes, which is less than one
-  // payload. 247 gives comfortable headroom over the 108-byte maximum and is
+  // payload. 247 gives comfortable headroom over the 116-byte maximum and is
   // within what CoreBluetooth negotiates.
   NimBLEDevice::setMTU(247);
 
